@@ -87,17 +87,17 @@ export const SUBTITLE_PRESETS: Record<SubtitlePreset, Omit<SubtitleStyle, "prese
   keyword: {
     fontFamily: "Fira Sans",
     fontSize: 25,
-    bold: true,
+    bold: false, // white base text is regular weight…
     uppercase: false,
-    primaryColor: "#FFC118",
-    highlightColor: "#FFFFFF",
+    primaryColor: "#FFFFFF",
+    highlightColor: "#FFC118", // …highlighted keywords are gold + bold
     outlineColor: "#3A3232",
     outlineWidth: 0,
     shadow: 0,
     boxColor: "#3A3232",
     boxOpacity: 0.9,
     positionY: 0.8,
-    maxCharsPerLine: 28,
+    maxCharsPerLine: 24,
   },
   tiktok: {
     fontFamily: "Fira Sans",

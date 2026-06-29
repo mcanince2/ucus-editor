@@ -7,7 +7,11 @@ import { buildTimeline, clipAtTime, timelineToSource } from "@/lib/timeline";
 import { formatTime } from "@/lib/format";
 import clsx from "clsx";
 
-type DragMode = null | { kind: "seek" } | { kind: "trim-l" | "trim-r" | "move"; clipId: string; startX: number };
+type DragMode =
+  | null
+  | { kind: "seek" }
+  | { kind: "trim-l" | "trim-r" | "move"; clipId: string; startX: number }
+  | { kind: "cue-l" | "cue-r"; cueId: string; startX: number };
 
 export default function Timeline() {
   const clips = useEditor((s) => s.clips);
@@ -27,6 +31,7 @@ export default function Timeline() {
   const selectClip = useEditor((s) => s.selectClip);
   const selectCue = useEditor((s) => s.selectCue);
   const updateClip = useEditor((s) => s.updateClip);
+  const updateCue = useEditor((s) => s.updateCue);
   const moveClip = useEditor((s) => s.moveClip);
   const removeClip = useEditor((s) => s.removeClip);
   const splitClipAtSource = useEditor((s) => s.splitClipAtSource);
@@ -61,6 +66,19 @@ export default function Timeline() {
         seek(Math.min(timeline.duration, clientXToTime(e.clientX)));
         return;
       }
+      if (drag.kind === "cue-l" || drag.kind === "cue-r") {
+        const cue = useEditor.getState().subtitles.find((c) => c.id === drag.cueId);
+        if (!cue) return;
+        const dx = (e.clientX - drag.startX) / pxPerSec;
+        if (drag.kind === "cue-l") {
+          updateCue(cue.id, { start: Math.max(0, Math.min(cue.end - 0.15, cue.start + dx)) });
+        } else {
+          updateCue(cue.id, { end: Math.max(cue.start + 0.15, cue.end + dx) });
+        }
+        setDrag({ ...drag, startX: e.clientX });
+        return;
+      }
+      if (drag.kind !== "trim-l" && drag.kind !== "trim-r" && drag.kind !== "move") return;
       const clip = useEditor.getState().clips.find((c) => c.id === drag.clipId);
       if (!clip) return;
       const asset = assetMap.get(clip.assetId);
@@ -282,25 +300,45 @@ export default function Timeline() {
             <div className="relative h-[26px] border-b border-white/[0.06] bg-black/10">
               {subtitles.map((cue) => {
                 const left = cue.start * pxPerSec;
-                const width = Math.max(8, (cue.end - cue.start) * pxPerSec);
+                const width = Math.max(10, (cue.end - cue.start) * pxPerSec);
+                const selected = cue.id === selectedCueId;
                 return (
-                  <button
+                  <div
                     key={cue.id}
-                    onClick={() => {
-                      selectCue(cue.id);
-                      seek(cue.start + 0.01);
-                    }}
                     className={clsx(
-                      "absolute top-1 bottom-1 overflow-hidden rounded px-1 text-left text-[9px] leading-tight transition-colors",
-                      cue.id === selectedCueId
-                        ? "bg-amber-400 text-black"
-                        : "bg-amber-400/20 text-amber-200 hover:bg-amber-400/35"
+                      "group absolute top-1 bottom-1 overflow-hidden rounded text-[9px] leading-tight transition-colors",
+                      selected ? "bg-amber-400 text-black ring-1 ring-amber-200" : "bg-amber-400/20 text-amber-200 hover:bg-amber-400/35"
                     )}
                     style={{ left, width }}
                     title={cue.text}
                   >
-                    <span className="block truncate">{cue.text}</span>
-                  </button>
+                    <button
+                      onClick={() => {
+                        selectCue(cue.id);
+                        seek(cue.start + 0.01);
+                      }}
+                      className="absolute inset-0 px-1.5 text-left"
+                    >
+                      <span className="block truncate">{cue.text}</span>
+                    </button>
+                    {/* trim handles — drag to shorten/extend the cue */}
+                    <div
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        pushHistory();
+                        setDrag({ kind: "cue-l", cueId: cue.id, startX: e.clientX });
+                      }}
+                      className="absolute left-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize bg-amber-500/70 opacity-0 group-hover:opacity-100"
+                    />
+                    <div
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        pushHistory();
+                        setDrag({ kind: "cue-r", cueId: cue.id, startX: e.clientX });
+                      }}
+                      className="absolute right-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize bg-amber-500/70 opacity-0 group-hover:opacity-100"
+                    />
+                  </div>
                 );
               })}
             </div>

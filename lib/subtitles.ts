@@ -116,7 +116,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         const start = Math.max(cue.start, ws[i].start);
         const end = i + 1 < ws.length ? Math.max(start + 0.05, ws[i + 1].start) : cue.end;
         const lineText = display
-          .map((w, j) => (j === i ? `{\\c${highlight}}${escapeAss(w)}{\\c${primary}}` : escapeAss(w)))
+          .map((w, j) =>
+            j === i ? `{\\b1\\c${highlight}}${escapeAss(w)}{\\b0\\c${primary}}` : escapeAss(w)
+          )
           .join(" ");
         events.push(dialogue(start, end, lineText));
       }
@@ -128,7 +130,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
           const words = line.split(" ");
           const ki = keywordIndex(words);
           return words
-            .map((w, i) => (i === ki ? `{\\c${highlight}}${escapeAss(w)}{\\c${primary}}` : escapeAss(w)))
+            .map((w, i) =>
+              i === ki ? `{\\b1\\c${highlight}}${escapeAss(w)}{\\b0\\c${primary}}` : escapeAss(w)
+            )
             .join(" ");
         })
         .join("\\N");
@@ -144,6 +148,74 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
   }
 
   return `${header}\n${events.join("\n")}\n`;
+}
+
+/**
+ * Split cues into short, punchy captions (~maxWords words / ~maxChars chars),
+ * using word-level timings when available so each chunk keeps accurate timing.
+ * Long sentences become several quick, easy-to-read lines.
+ */
+export function splitCuesShort(cues: SubtitleCue[], maxWords = 4, maxChars = 24): SubtitleCue[] {
+  const out: SubtitleCue[] = [];
+  let idx = 0;
+  for (const cue of cues) {
+    if (cue.end <= cue.start) continue;
+    const words = cue.words && cue.words.length ? cue.words : null;
+
+    if (!words) {
+      const toks = cue.text.split(/\s+/).filter(Boolean);
+      if (toks.length <= maxWords && cue.text.length <= maxChars) {
+        out.push({ ...cue, id: `c${idx++}_${Math.round(cue.start * 100)}` });
+        continue;
+      }
+      const chunks: string[][] = [];
+      let cur: string[] = [];
+      let curLen = 0;
+      for (const t of toks) {
+        if (cur.length >= maxWords || (cur.length && curLen + t.length + 1 > maxChars)) {
+          chunks.push(cur);
+          cur = [];
+          curLen = 0;
+        }
+        cur.push(t);
+        curLen += t.length + 1;
+      }
+      if (cur.length) chunks.push(cur);
+      const per = (cue.end - cue.start) / chunks.length;
+      chunks.forEach((ch, i) =>
+        out.push({
+          id: `c${idx++}_${i}`,
+          start: cue.start + i * per,
+          end: cue.start + (i + 1) * per,
+          text: ch.join(" "),
+        })
+      );
+      continue;
+    }
+
+    let cur: WordTiming[] = [];
+    let curLen = 0;
+    const flush = () => {
+      if (!cur.length) return;
+      out.push({
+        id: `c${idx++}_${Math.round(cur[0].start * 100)}`,
+        start: cur[0].start,
+        end: cur[cur.length - 1].end,
+        text: cur.map((w) => w.word).join(" "),
+        words: cur.slice(),
+      });
+      cur = [];
+      curLen = 0;
+    };
+    for (const w of words) {
+      const wl = w.word.length + 1;
+      if (cur.length >= maxWords || (cur.length && curLen + wl > maxChars)) flush();
+      cur.push(w);
+      curLen += wl;
+    }
+    flush();
+  }
+  return out.sort((a, b) => a.start - b.start);
 }
 
 /** Merge raw transcript cues into nicely sized subtitle lines. */

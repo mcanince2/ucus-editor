@@ -5,6 +5,7 @@ import { Captions, RefreshCw, Plus, Trash2, Play } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { transcribeAsset } from "@/lib/api";
 import { buildTimeline, mapAssetCuesToTimeline } from "@/lib/timeline";
+import { splitCuesShort } from "@/lib/subtitles";
 import { PanelHeader, Segmented, Slider, Select, ColorField, Toggle, Field, EmptyHint } from "@/components/ui";
 import { FONT_OPTIONS } from "@/lib/constants";
 import { formatTime, uid } from "@/lib/format";
@@ -58,9 +59,10 @@ export default function SubtitlesPanel() {
       setBusy({ task: "Altyazılar yeniden oluşturuluyor", progress: Math.round((done / ids.length) * 100) });
     }
     all.sort((a, b) => a.start - b.start);
-    setSubtitles(all);
+    const short = splitCuesShort(all);
+    setSubtitles(short);
     setBusy(null);
-    showToast("success", `${all.length} satır oluşturuldu.`);
+    showToast("success", `${short.length} satır oluşturuldu.`);
   };
 
   const addManual = () => {

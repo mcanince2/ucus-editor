@@ -61,7 +61,7 @@ export default function SubtitleOverlay({
             style={{
               fontFamily: style.fontFamily,
               fontSize: `${fontSizeCqh}cqh`,
-              fontWeight: style.bold ? 800 : 500,
+              fontWeight: style.bold ? 800 : 400,
               color: style.primaryColor,
               textShadow,
               background: style.boxOpacity > 0 ? rgba(style.boxColor, style.boxOpacity) : "transparent",
@@ -77,7 +77,7 @@ export default function SubtitleOverlay({
               const isActiveWord = style.preset === "tiktok" && awi === globalIdx;
               const hl = isKeyword || isActiveWord;
               return (
-                <span key={wi} style={hl ? { color: style.highlightColor } : undefined}>
+                <span key={wi} style={hl ? { color: style.highlightColor, fontWeight: 800 } : undefined}>
                   {w}
                   {wi < words.length - 1 ? " " : ""}
                 </span>

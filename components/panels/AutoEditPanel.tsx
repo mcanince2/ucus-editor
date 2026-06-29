@@ -4,6 +4,7 @@ import { Wand2, Sparkles, Scissors, Captions, AlertTriangle, CheckCircle2 } from
 import { useEditor } from "@/lib/store";
 import { analyzeSilence, transcribeAsset } from "@/lib/api";
 import { buildTimeline, mapAssetCuesToTimeline, computeTrimStats } from "@/lib/timeline";
+import { splitCuesShort } from "@/lib/subtitles";
 import { SILENCE_PROFILES } from "@/lib/constants";
 import { PanelHeader, Segmented, Toggle } from "@/components/ui";
 import { formatTime } from "@/lib/format";
@@ -90,10 +91,11 @@ export default function AutoEditPanel() {
       setBusy({ task: "Türkçe altyazı oluşturuluyor", progress: Math.round((done / assetIds.length) * 100) });
     }
     all.sort((a, b) => a.start - b.start);
-    setSubtitles(all);
+    const short = splitCuesShort(all);
+    setSubtitles(short);
     setBusy(null);
-    if (all.length) {
-      showToast("success", `${all.length} altyazı satırı oluşturuldu.`);
+    if (short.length) {
+      showToast("success", `${short.length} altyazı satırı oluşturuldu.`);
       setActivePanel("subtitles");
     } else {
       showToast("info", "Konuşma algılanmadı.");
