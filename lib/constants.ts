@@ -147,7 +147,11 @@ export const DEFAULT_LOGO: LogoState = {
 };
 
 export const DEFAULT_MUSIC: MusicState = {
-  source: "none",
+  // Default to a built-in, royalty-free bed so every export has music out of
+  // the box (the licensed "Consumerism" track isn't shipped publicly).
+  source: "builtin",
+  builtinId: "uplift",
+  name: "Umut",
   volume: 0.28,
   duck: true,
   duckAmount: 0.12,

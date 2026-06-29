@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Scissors, ZoomIn, ZoomOut, Trash2, Type, Music2, ImageIcon, Volume2, Layers } from "lucide-react";
+import { Scissors, ZoomIn, ZoomOut, Trash2, Type, Music2, ImageIcon, Volume2, Layers, Plus, Film } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { buildTimeline, clipAtTime, timelineToSource } from "@/lib/timeline";
-import { formatTime } from "@/lib/format";
+import { formatTime, uid } from "@/lib/format";
+import { uploadFile } from "@/lib/api";
+import type { MediaAsset, Overlay } from "@/lib/types";
 import clsx from "clsx";
 
 type DragMode =
   | null
   | { kind: "seek" }
   | { kind: "trim-l" | "trim-r" | "move"; clipId: string; startX: number }
-  | { kind: "cue-l" | "cue-r"; cueId: string; startX: number };
+  | { kind: "cue-l" | "cue-r"; cueId: string; startX: number }
+  | { kind: "ov-move" | "ov-r"; ovId: string; startX: number };
 
 export default function Timeline() {
   const clips = useEditor((s) => s.clips);
@@ -36,6 +39,61 @@ export default function Timeline() {
   const removeClip = useEditor((s) => s.removeClip);
   const splitClipAtSource = useEditor((s) => s.splitClipAtSource);
   const pushHistory = useEditor((s) => s.pushHistory);
+  const addOverlay = useEditor((s) => s.addOverlay);
+  const updateOverlay = useEditor((s) => s.updateOverlay);
+  const removeOverlay = useEditor((s) => s.removeOverlay);
+  const addAsset = useEditor((s) => s.addAsset);
+  const updateAsset = useEditor((s) => s.updateAsset);
+  const setActivePanel = useEditor((s) => s.setActivePanel);
+  const showToast = useEditor((s) => s.showToast);
+
+  const v2InputRef = useRef<HTMLInputElement>(null);
+
+  // Add a video/image overlay onto the "Video 2" layer (over the main clips).
+  const addOverlayFile = async (file: File) => {
+    const isImage = /\.(png|jpg|jpeg|webp|svg|gif)$/i.test(file.name);
+    const isVideo = /\.(mp4|mov|webm|mkv|m4v)$/i.test(file.name);
+    if (!isImage && !isVideo) {
+      showToast("error", "Video veya görsel seçin.");
+      return;
+    }
+    const id = uid(isImage ? "img_" : "ovv_");
+    const placeholder: MediaAsset = {
+      id,
+      name: file.name,
+      kind: isImage ? "image" : "video",
+      url: `/api/media/${id}`,
+      size: file.size,
+      duration: 0,
+      hasAudio: false,
+      status: "uploading",
+    };
+    addAsset(placeholder);
+    try {
+      const meta = await uploadFile(file, id, () => {});
+      updateAsset(id, { ...meta, status: "ready" });
+      const dur = isImage
+        ? Math.min(5, timeline.duration || 5)
+        : Math.min(meta.duration || 5, timeline.duration || meta.duration || 5);
+      const ov: Overlay = {
+        id: uid("ov_"),
+        assetId: id,
+        kind: isImage ? "image" : "video",
+        start: 0,
+        duration: dur,
+        x: 0.5,
+        y: 0.32,
+        scale: 0.42,
+        opacity: 1,
+        muted: true,
+      };
+      addOverlay(ov);
+      setActivePanel("layers");
+      showToast("success", "Üst katman eklendi — boyut/konumu Katmanlar'dan ayarla.");
+    } catch (e: any) {
+      showToast("error", e.message);
+    }
+  };
 
   const timeline = useMemo(() => buildTimeline(clips), [clips]);
   const assetMap = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
@@ -74,6 +132,18 @@ export default function Timeline() {
           updateCue(cue.id, { start: Math.max(0, Math.min(cue.end - 0.15, cue.start + dx)) });
         } else {
           updateCue(cue.id, { end: Math.max(cue.start + 0.15, cue.end + dx) });
+        }
+        setDrag({ ...drag, startX: e.clientX });
+        return;
+      }
+      if (drag.kind === "ov-move" || drag.kind === "ov-r") {
+        const ov = useEditor.getState().overlays.find((o) => o.id === drag.ovId);
+        if (!ov) return;
+        const dx = (e.clientX - drag.startX) / pxPerSec;
+        if (drag.kind === "ov-move") {
+          updateOverlay(ov.id, { start: Math.max(0, ov.start + dx) });
+        } else {
+          updateOverlay(ov.id, { duration: Math.max(0.3, ov.duration + dx) });
         }
         setDrag({ ...drag, startX: e.clientX });
         return;
@@ -173,14 +243,32 @@ export default function Timeline() {
         </div>
       </div>
 
+      <input
+        ref={v2InputRef}
+        type="file"
+        accept="video/*,image/*"
+        hidden
+        onChange={(e) => e.target.files?.[0] && addOverlayFile(e.target.files[0])}
+      />
+
       {/* Track labels + scroll area */}
       <div className="flex flex-1 overflow-hidden">
         {/* labels */}
         <div className="w-20 shrink-0 border-r border-white/[0.06] bg-black/20 text-[10px] font-medium text-slate-500">
           <div className="h-6" />
+          <div className="flex items-center gap-1 border-b border-white/[0.04] px-2" style={{ height: 44 }}>
+            <Layers className="h-3 w-3" />
+            <span className="truncate">Video 2</span>
+            <button
+              onClick={() => v2InputRef.current?.click()}
+              className="ml-auto grid h-5 w-5 place-items-center rounded bg-white/[0.06] text-slate-300 hover:bg-brand-500/30 hover:text-brand-200"
+              title="Üste video/görsel ekle"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+          </div>
           <TrackLabel icon={<ImageIcon className="h-3 w-3" />} label="Video" h={64} />
           <TrackLabel icon={<Type className="h-3 w-3" />} label="Altyazı" h={26} />
-          {overlays.length > 0 && <TrackLabel icon={<Layers className="h-3 w-3" />} label="Katman" h={24} />}
           <TrackLabel icon={<Music2 className="h-3 w-3" />} label="Müzik" h={24} />
           {audioTracks.length > 0 && <TrackLabel icon={<Music2 className="h-3 w-3" />} label="Ses K." h={24} />}
           <TrackLabel icon={<ImageIcon className="h-3 w-3" />} label="Logo" h={18} />
@@ -205,6 +293,69 @@ export default function Timeline() {
                   </span>
                 </div>
               ))}
+            </div>
+
+            {/* VIDEO 2 (overlay) TRACK — videos/images that sit ON TOP of the main clips */}
+            <div className="relative h-11 border-b border-white/[0.06] bg-white/[0.015]">
+              {overlays.length === 0 ? (
+                <button
+                  onClick={() => v2InputRef.current?.click()}
+                  className="absolute inset-1 flex items-center justify-center gap-1.5 rounded-md border border-dashed border-white/12 text-[10px] text-slate-500 hover:border-brand-400/50 hover:text-brand-300"
+                >
+                  <Plus className="h-3 w-3" /> Üste video/görsel ekle (mevcut videonun üzerine gelir)
+                </button>
+              ) : (
+                overlays.map((o) => {
+                  const asset = assetMap.get(o.assetId);
+                  const left = o.start * pxPerSec;
+                  const w = Math.max(28, o.duration * pxPerSec);
+                  return (
+                    <div
+                      key={o.id}
+                      className="group absolute inset-y-1 cursor-grab overflow-hidden rounded-md border border-brand-400/40 bg-brand-500/25"
+                      style={{ left, width: w }}
+                      title={asset?.name}
+                      onPointerDown={(e) => {
+                        if ((e.target as HTMLElement).dataset.h) return;
+                        pushHistory();
+                        setDrag({ kind: "ov-move", ovId: o.id, startX: e.clientX });
+                      }}
+                      onClick={() => {
+                        setActivePanel("layers");
+                        seek(o.start + 0.01);
+                      }}
+                    >
+                      {asset?.thumbnail && (
+                        <div className="absolute inset-0 bg-cover bg-center opacity-50" style={{ backgroundImage: `url(${asset.thumbnail})` }} />
+                      )}
+                      <span className="relative flex h-full items-center gap-1 px-1.5 text-[9px] text-brand-50">
+                        {o.kind === "image" ? <ImageIcon className="h-2.5 w-2.5" /> : <Film className="h-2.5 w-2.5" />}
+                        <span className="truncate">{asset?.name || (o.kind === "image" ? "Görsel" : "Video")}</span>
+                      </span>
+                      <div
+                        data-h="1"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          pushHistory();
+                          setDrag({ kind: "ov-r", ovId: o.id, startX: e.clientX });
+                        }}
+                        className="absolute right-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize bg-brand-300/70 opacity-0 group-hover:opacity-100"
+                      />
+                      <button
+                        data-h="1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeOverlay(o.id);
+                        }}
+                        className="absolute right-1 top-0.5 z-30 rounded bg-black/50 p-0.5 text-rose-300 opacity-0 group-hover:opacity-100"
+                        title="Kaldır"
+                      >
+                        <Trash2 className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* VIDEO TRACK */}
@@ -342,23 +493,6 @@ export default function Timeline() {
                 );
               })}
             </div>
-
-            {/* OVERLAY TRACK */}
-            {overlays.length > 0 && (
-              <div className="relative h-6 border-b border-white/[0.06] bg-black/10">
-                {overlays.map((o) => (
-                  <button
-                    key={o.id}
-                    onClick={() => seek(o.start + 0.01)}
-                    className="absolute inset-y-1 overflow-hidden rounded bg-brand-500/30 px-1.5 text-left text-[9px] text-brand-100 hover:bg-brand-500/45"
-                    style={{ left: o.start * pxPerSec, width: Math.max(20, o.duration * pxPerSec) }}
-                    title={assetMap.get(o.assetId)?.name}
-                  >
-                    <span className="truncate">{o.kind === "image" ? "Görsel" : "Video"}</span>
-                  </button>
-                ))}
-              </div>
-            )}
 
             {/* MUSIC TRACK */}
             <div className="relative h-6 border-b border-white/[0.06] bg-black/10">

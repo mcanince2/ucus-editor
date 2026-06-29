@@ -13,7 +13,7 @@ ENV HOME=/home/node \
     NODE_ENV=production \
     DATA_DIR=/data \
     TRANSCRIBE_PROVIDER=local \
-    WHISPER_MODEL=base \
+    WHISPER_MODEL=small \
     HF_HUB_OFFLINE=1 \
     PORT=7860
 WORKDIR /app

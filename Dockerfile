@@ -14,9 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # loads in ~1-2s, no PyTorch → smaller image, dramatically faster transcription.
 RUN pip3 install --no-cache-dir --break-system-packages faster-whisper
 
-# Bake the base model into a fixed, world-readable dir so it is NEVER
+# Bake the models into a fixed, world-readable dir so they are NEVER
 # re-downloaded at runtime (works under any container user, e.g. HF UID 1000).
-RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/opt/whisper-models')" \
+# "small" = much better Turkish accuracy than base; "base" kept for a fast option.
+RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='/opt/whisper-models'); WhisperModel('base', device='cpu', compute_type='int8', download_root='/opt/whisper-models')" \
  && chmod -R a+rX /opt/whisper-models
 
 WORKDIR /app
@@ -46,7 +47,7 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     PORT=5190 \
     TRANSCRIBE_PROVIDER=local \
-    WHISPER_MODEL=base \
+    WHISPER_MODEL=small \
     HF_HUB_OFFLINE=1
 EXPOSE 5190
 RUN mkdir -p /data
