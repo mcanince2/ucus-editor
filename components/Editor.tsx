@@ -85,10 +85,12 @@ export default function Editor() {
       try {
         const res = await fetch("/api/brand-music");
         if (res.ok) {
+          // Brand music (Consumerism) is shipped → make it the default track,
+          // overriding the built-in fallback. (If absent, the built-in stays.)
           const asset = await res.json();
           const st = useEditor.getState();
           if (!st.assets.some((a) => a.id === asset.id)) st.addAsset(asset);
-          if (st.music.source === "none") {
+          if (st.music.source !== "upload") {
             st.setMusic({ source: "upload", assetId: asset.id, name: asset.name });
           }
         }

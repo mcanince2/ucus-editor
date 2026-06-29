@@ -29,5 +29,5 @@ npm-debug.log*
 # alt build dir
 /.next-build/
 
-# licensed default music (kept local only, not in public repo)
+# licensed default music — shipped only into the HF Space image, never the public Git repo
 /public/brand-music.mp3
