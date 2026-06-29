@@ -46,9 +46,39 @@ function cleanText(t: string): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
-/** Local transcription via the openai-whisper CLI. */
+/**
+ * Local transcription. Prefers faster-whisper (CTranslate2, ~5-8x faster on
+ * CPU, no torch) via a Python wrapper; falls back to the openai-whisper CLI
+ * (e.g. local dev machines that only have that installed).
+ */
 async function transcribeLocal(input: string): Promise<TranscriptResult> {
   const wav = await extractWav(input);
+  const fw = await tryFasterWhisper(wav);
+  if (fw) return fw;
+  return await transcribeWhisperCli(wav);
+}
+
+const PYTHON = process.env.PYTHON_PATH || "python3";
+
+/** Run the faster-whisper wrapper; returns null if unavailable/failed. */
+async function tryFasterWhisper(wav: string): Promise<TranscriptResult | null> {
+  const script = path.join(process.cwd(), "scripts", "transcribe_fw.py");
+  if (!fs.existsSync(script)) return null;
+  const r = await run(PYTHON, [script, wav, "tr", WHISPER_MODEL]);
+  const text = r.stdout.trim();
+  if (r.code !== 0 || !text) return null;
+  try {
+    const line = text.split("\n").filter(Boolean).pop() || "";
+    const data = JSON.parse(line);
+    if (!Array.isArray(data.segments)) return null;
+    return parseWhisperJson(data);
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback: openai-whisper CLI. */
+async function transcribeWhisperCli(wav: string): Promise<TranscriptResult> {
   const outDir = path.join(TMP_DIR, `whisper_${Date.now()}`);
   fs.mkdirSync(outDir, { recursive: true });
   const args = [

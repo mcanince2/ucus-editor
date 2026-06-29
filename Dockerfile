@@ -10,15 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg ca-certificates python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# CPU-only PyTorch + openai-whisper (Türkçe altyazı, ücretsiz/yerel).
-# CPU wheels keep the image small enough for a 4 GB VPS.
-RUN pip3 install --no-cache-dir --break-system-packages \
-      torch --index-url https://download.pytorch.org/whl/cpu \
- && pip3 install --no-cache-dir --break-system-packages openai-whisper
+# faster-whisper (CTranslate2 + int8): ~5-8x faster than openai-whisper on CPU,
+# loads in ~1-2s, no PyTorch → smaller image, dramatically faster transcription.
+RUN pip3 install --no-cache-dir --break-system-packages faster-whisper
 
-# Pre-download the "base" model so the first subtitle run isn't slow.
-# (base is the sweet spot for a 1-vCPU / 4 GB box; "small" is heavier.)
-RUN python3 -c "import whisper; whisper.load_model('base')"
+# Bake the base model into a fixed, world-readable dir so it is NEVER
+# re-downloaded at runtime (works under any container user, e.g. HF UID 1000).
+RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/opt/whisper-models')" \
+ && chmod -R a+rX /opt/whisper-models
 
 WORKDIR /app
 
@@ -29,11 +28,26 @@ COPY . .
 # Cap build memory so `next build` doesn't OOM on a small VPS.
 RUN NODE_OPTIONS=--max-old-space-size=3072 npm run build
 
+# Fonts for libass (subtitle burn) + drawtext (intro/outro). REQUIRED — without
+# a fontconfig font, export FAILS when subtitles are present. Placed late so the
+# cached torch/npm/build layers above are reused (fast rebuilds). Fira Sans for
+# brand accuracy; falls back to DejaVu if the download fails.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fontconfig fonts-dejavu-core curl \
+ && mkdir -p /usr/share/fonts/truetype/firasans \
+ && for w in Regular Medium SemiBold Bold; do \
+      curl -fsSL -o /usr/share/fonts/truetype/firasans/FiraSans-$w.ttf \
+        "https://github.com/mozilla/Fira/raw/master/ttf/FiraSans-$w.ttf" || true; \
+    done \
+ && fc-cache -f >/dev/null 2>&1 || true \
+ && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     DATA_DIR=/data \
     PORT=5190 \
     TRANSCRIBE_PROVIDER=local \
-    WHISPER_MODEL=base
+    WHISPER_MODEL=base \
+    HF_HUB_OFFLINE=1
 EXPOSE 5190
 RUN mkdir -p /data
 
