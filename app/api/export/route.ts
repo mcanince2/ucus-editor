@@ -8,7 +8,7 @@ import { buildAss } from "@/lib/subtitles";
 import { clipDuration } from "@/lib/timeline";
 import { generateTrack, trackPath } from "@/lib/music";
 import { ASPECT_PRESETS, QUALITY_PRESETS } from "@/lib/constants";
-import { createJob, updateJob } from "@/lib/jobs";
+import { createJob, updateJob, setJobChild, clearJobChild, isCancelled } from "@/lib/jobs";
 import type { ExportRequest } from "@/lib/types";
 import { uid } from "@/lib/format";
 
@@ -214,17 +214,33 @@ export async function POST(req: Request) {
 async function runExport(jobId: string, input: BuildInput) {
   const primary = buildExport(input);
 
+  const reg = (child: any) => setJobChild(jobId, child);
+
   // ── PASS 1: concat / crossfade + audio mix ──
   updateJob(jobId, { status: "running", stage: "Klipler birleştiriliyor ve ses karıştırılıyor", progress: 2 });
-  let r = await runFfmpegProgress(primary.pass1, primary.mainDuration, (f) =>
-    updateJob(jobId, { progress: Math.round(f * 55) })
+  let r = await runFfmpegProgress(
+    primary.pass1,
+    primary.mainDuration,
+    (f) => updateJob(jobId, { progress: Math.round(f * 55) }),
+    reg
   );
+  if (isCancelled(jobId)) {
+    clearJobChild(jobId);
+    return;
+  }
   if (r.code !== 0) {
     // Fallback: disable transitions (xfade can be picky on odd inputs).
     const noTrans = buildExport({ ...input, transitions: false });
-    r = await runFfmpegProgress(noTrans.pass1, noTrans.mainDuration, (f) =>
-      updateJob(jobId, { progress: Math.round(f * 55) })
+    r = await runFfmpegProgress(
+      noTrans.pass1,
+      noTrans.mainDuration,
+      (f) => updateJob(jobId, { progress: Math.round(f * 55) }),
+      reg
     );
+    if (isCancelled(jobId)) {
+      clearJobChild(jobId);
+      return;
+    }
     if (r.code !== 0) {
       updateJob(jobId, {
         status: "error",
@@ -237,16 +253,30 @@ async function runExport(jobId: string, input: BuildInput) {
   // ── PASS 2: logo + subtitles + intro/outro + final encode ──
   if (primary.pass2) {
     updateJob(jobId, { stage: "Logo, altyazı ve son işleme uygulanıyor", progress: 58 });
-    let r2 = await runFfmpegProgress(primary.pass2, primary.totalDuration, (f) =>
-      updateJob(jobId, { progress: 58 + Math.round(f * 40) })
+    let r2 = await runFfmpegProgress(
+      primary.pass2,
+      primary.totalDuration,
+      (f) => updateJob(jobId, { progress: 58 + Math.round(f * 40) }),
+      reg
     );
+    if (isCancelled(jobId)) {
+      clearJobChild(jobId);
+      return;
+    }
     if (r2.code !== 0 && (input.intro || input.outro || (input.overlays && input.overlays.length))) {
       // Fallback: drop intro/outro + overlays but keep logo + subtitles.
       const noEnds = buildExport({ ...input, intro: undefined, outro: undefined, overlays: [] });
       if (noEnds.pass2) {
-        r2 = await runFfmpegProgress(noEnds.pass2, noEnds.totalDuration, (f) =>
-          updateJob(jobId, { progress: 58 + Math.round(f * 40) })
+        r2 = await runFfmpegProgress(
+          noEnds.pass2,
+          noEnds.totalDuration,
+          (f) => updateJob(jobId, { progress: 58 + Math.round(f * 40) }),
+          reg
         );
+        if (isCancelled(jobId)) {
+          clearJobChild(jobId);
+          return;
+        }
       }
     }
     if (r2.code !== 0) {
@@ -257,6 +287,8 @@ async function runExport(jobId: string, input: BuildInput) {
     // No overlays: the intermediate IS the final output.
     fs.copyFileSync(input.intermediatePath, input.outPath);
   }
+
+  clearJobChild(jobId);
 
   // Cleanup intermediate.
   try {

@@ -60,11 +60,13 @@ export function run(bin: string, args: string[], opts: { input?: Buffer } = {}):
 export function runFfmpegProgress(
   args: string[],
   totalDuration: number,
-  onProgress: (fraction: number) => void
+  onProgress: (fraction: number) => void,
+  onSpawn?: (child: ReturnType<typeof spawn>) => void
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const full = ["-y", "-progress", "pipe:1", "-nostats", ...args];
     const child = spawn(FFMPEG, full, { windowsHide: true });
+    onSpawn?.(child);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {

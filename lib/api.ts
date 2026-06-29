@@ -88,3 +88,9 @@ export async function getExportJob(id: string): Promise<ExportJob | null> {
     return null;
   }
 }
+
+export async function cancelExport(id: string): Promise<void> {
+  try {
+    await fetch(`/api/export/${id}`, { method: "DELETE" });
+  } catch {}
+}
