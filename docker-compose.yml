@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────────────────────────
+# Uçuş Saati Studio — Hostinger VPS (Docker Compose) deployment.
+# Deployed via Hostinger MCP "Create Docker Compose project".
+#
+# Code delivery: this builds the image from a GitHub repo context.
+# Replace USER/REPO below with your repo (the ucus-editor folder).
+# Alternatively, set `image:` to a prebuilt registry image and remove `build:`.
+# ─────────────────────────────────────────────────────────────
+services:
+  ucus-editor:
+    build:
+      # Repo root IS the app (ucus-editor pushed as its own repo).
+      context: "https://github.com/mcanince2/ucus-editor.git#main"
+    image: ucus-editor:latest
+    restart: unless-stopped
+    ports:
+      # 80/443/8080 are taken by other projects on this VPS → use 5190.
+      - "5190:5190"
+    environment:
+      - NODE_ENV=production
+      - PORT=5190
+      - DATA_DIR=/data
+      # Local whisper baked into the image (free). base model = good for 4 GB.
+      - TRANSCRIBE_PROVIDER=local
+      - WHISPER_MODEL=base
+    volumes:
+      - ucus-data:/data
+
+volumes:
+  ucus-data:

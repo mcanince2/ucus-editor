@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+next-env.d.ts
+
+# debug
+npm-debug.log*
+
+# env
+.env
+.env.local
+
+# editor working data (uploaded media, renders, generated music)
+/.data/
+
+# alt build dir
+/.next-build/
+
+# licensed default music (kept local only, not in public repo)
+/public/brand-music.mp3
