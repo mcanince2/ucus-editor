@@ -8,10 +8,10 @@
 # ─────────────────────────────────────────────────────────────
 services:
   ucus-editor:
-    build:
-      # Repo root IS the app (ucus-editor pushed as its own repo).
-      context: "https://github.com/mcanince2/ucus-editor.git#main"
-    image: ucus-editor:latest
+    # Pre-built image from GHCR (built by GitHub Actions). Pull-based deploy
+    # works reliably with Hostinger's compose orchestration.
+    image: ghcr.io/mcanince2/ucus-editor:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       # 80/443/8080 are taken by other projects on this VPS → use 5190.
