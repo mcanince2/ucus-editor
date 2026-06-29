@@ -7,14 +7,31 @@ import type { TranscriptResult, WordTiming } from "./types";
 export const WHISPER = process.env.WHISPER_PATH || "whisper";
 export const WHISPER_MODEL = process.env.WHISPER_MODEL || "small";
 export const PROVIDER = (process.env.TRANSCRIBE_PROVIDER || "auto").toLowerCase();
+const PY = process.env.PYTHON_PATH || "python3";
 
-export async function whisperLocalAvailable(): Promise<boolean> {
+/** faster-whisper (Python lib) present? */
+async function fasterWhisperAvailable(): Promise<boolean> {
+  try {
+    const r = await run(PY, ["-c", "import faster_whisper"]);
+    return r.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** openai-whisper CLI present? */
+async function openaiWhisperCliAvailable(): Promise<boolean> {
   try {
     const r = await run(WHISPER, ["--help"]);
     return r.code === 0;
   } catch {
     return false;
   }
+}
+
+/** Local transcription available via EITHER faster-whisper or the whisper CLI. */
+export async function whisperLocalAvailable(): Promise<boolean> {
+  return (await fasterWhisperAvailable()) || (await openaiWhisperCliAvailable());
 }
 
 export function openaiAvailable(): boolean {
