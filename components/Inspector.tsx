@@ -44,15 +44,40 @@ export default function Inspector() {
             <Info label="Kaynak" value={`${formatTime(clip.in)}–${formatTime(clip.out)}`} />
           </div>
 
-          <Slider
-            label="Hız"
-            min={0.5}
-            max={2}
-            step={0.05}
-            value={clip.speed}
-            onChange={(v) => updateClip(clip.id, { speed: v })}
-            format={(v) => `${v.toFixed(2)}×`}
-          />
+          <div>
+            <Slider
+              label="Hız (ağır / hızlı çekim)"
+              min={0.25}
+              max={4}
+              step={0.05}
+              value={clip.speed}
+              onChange={(v) => updateClip(clip.id, { speed: v })}
+              format={(v) => `${v.toFixed(2)}×`}
+            />
+            <div className="mt-1.5 grid grid-cols-6 gap-1">
+              {[0.25, 0.5, 1, 1.5, 2, 4].map((sp) => (
+                <button
+                  key={sp}
+                  onClick={() => {
+                    pushHistory();
+                    updateClip(clip.id, { speed: sp });
+                  }}
+                  className={
+                    "rounded-md py-1 text-[10px] font-medium tabular-nums transition-colors " +
+                    (Math.abs(clip.speed - sp) < 0.001
+                      ? "bg-brand-500 text-white"
+                      : "bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200")
+                  }
+                >
+                  {sp}×
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-black/20 px-3 py-2 text-center text-[11px] text-slate-400">
+            Hızlandırılmış süre: <span className="font-semibold text-slate-200">{formatTime(clipDuration(clip))}</span>
+          </div>
 
           <Field label="Geçiş (önceki klipten)">
             <Select<TransitionType>
@@ -158,7 +183,7 @@ export default function Inspector() {
       </div>
       <div className="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3 text-[11px] leading-relaxed text-slate-500">
         <Gauge className="mb-1.5 h-4 w-4 text-brand-300" />
-        İpucu: Zaman çizelgesinde bir klibi seçip kenarlarından sürükleyerek kırpabilir, oynatma çizgisinde <b className="text-slate-300">S</b> ile bölebilirsiniz.
+        İpucu: Zaman çizelgesinde bir klibi seçip kenarlarından sürükleyerek kırpabilir, oynatma çizgisinde <b className="text-slate-300">S</b> veya <b className="text-slate-300">Ctrl+B</b> ile bölebilirsiniz.
       </div>
     </div>
   );

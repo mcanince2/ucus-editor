@@ -3,10 +3,21 @@ import type {
   LogoState,
   MusicState,
   ProjectSettings,
+  SeriesType,
   SilenceSensitivity,
   SubtitlePreset,
   SubtitleStyle,
 } from "./types";
+
+/**
+ * Video series → display label + export file-name base. The fileBase is used
+ * (server-side) with a per-series counter to auto-name exports, e.g.
+ * "Minik_Pilotlarla_Roportaj_1", "Gonullu_Roportaji_2".
+ */
+export const SERIES_PRESETS: Record<SeriesType, { label: string; fileBase: string }> = {
+  minik: { label: "Minik Pilotlarla Röportaj", fileBase: "Minik_Pilotlarla_Roportaj" },
+  gonullu: { label: "Gönüllü Röportajı", fileBase: "Gonullu_Roportaji" },
+};
 
 export const ACCEPTED_VIDEO = [".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv"];
 export const ACCEPTED_AUDIO = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
@@ -163,6 +174,7 @@ export const DEFAULT_MUSIC: MusicState = {
 export const DEFAULT_SETTINGS: ProjectSettings = {
   aspect: "9:16",
   quality: "auto",
+  seriesType: "minik",
   fps: 30,
   normalizeVoice: true,
   denoise: false,

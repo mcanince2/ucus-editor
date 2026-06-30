@@ -9,7 +9,8 @@ import { clipDuration } from "@/lib/timeline";
 import { generateTrack, trackPath } from "@/lib/music";
 import { ASPECT_PRESETS, QUALITY_PRESETS } from "@/lib/constants";
 import { createJob, updateJob, setJobChild, clearJobChild, isCancelled } from "@/lib/jobs";
-import type { ExportRequest } from "@/lib/types";
+import { nextCount, seriesFileName } from "@/lib/counters";
+import type { ExportRequest, SeriesType } from "@/lib/types";
 import { uid } from "@/lib/format";
 
 export const runtime = "nodejs";
@@ -175,7 +176,6 @@ export async function POST(req: Request) {
   const font = detectFont();
   const jobId = uid("exp_");
   const intermediatePath = freshTmp("_mid.mp4");
-  const outName = `ucus-saati-${Date.now()}.mp4`;
   const outPath = path.join(EXPORT_DIR, `${jobId}.mp4`);
 
   const baseInput: BuildInput = {
@@ -202,16 +202,18 @@ export async function POST(req: Request) {
     outPath,
   };
 
+  const seriesType = (doc.settings.seriesType || "minik") as SeriesType;
+
   createJob(jobId);
   // Run asynchronously; client polls /api/export/[id].
-  runExport(jobId, baseInput).catch((e) => {
+  runExport(jobId, baseInput, seriesType).catch((e) => {
     updateJob(jobId, { status: "error", error: String(e?.message || e) });
   });
 
   return NextResponse.json({ jobId });
 }
 
-async function runExport(jobId: string, input: BuildInput) {
+async function runExport(jobId: string, input: BuildInput, seriesType: SeriesType) {
   const primary = buildExport(input);
 
   const reg = (child: any) => setJobChild(jobId, child);
@@ -295,12 +297,15 @@ async function runExport(jobId: string, input: BuildInput) {
     fs.existsSync(input.intermediatePath) && fs.unlinkSync(input.intermediatePath);
   } catch {}
 
+  // Only consume a counter slot on a successful render, so cancelled/failed
+  // jobs never burn a number. e.g. "Minik_Pilotlarla_Roportaj_3.mp4".
+  const n = nextCount(seriesType);
   updateJob(jobId, {
     status: "done",
     progress: 100,
     stage: "Tamamlandı",
     downloadUrl: `/api/download/${jobId}`,
-    outName: `ucus-saati-${Date.now()}.mp4`,
+    outName: `${seriesFileName(seriesType, n)}.mp4`,
   });
 }
 

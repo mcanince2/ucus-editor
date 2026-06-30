@@ -138,9 +138,14 @@ export interface AudioTrack {
 export type AspectRatio = "9:16" | "16:9" | "1:1" | "original";
 export type ExportQuality = "auto" | "preview" | "hd" | "full";
 
+/** Video series the project belongs to — drives auto file naming + counter. */
+export type SeriesType = "minik" | "gonullu";
+
 export interface ProjectSettings {
   aspect: AspectRatio;
   quality: ExportQuality;
+  /** Which series this export belongs to (controls the auto file name). */
+  seriesType: SeriesType;
   fps: number;
   normalizeVoice: boolean; // loudnorm on speech
   denoise: boolean; // light afftdn on speech

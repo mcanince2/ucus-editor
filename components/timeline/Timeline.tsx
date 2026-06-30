@@ -219,7 +219,7 @@ export default function Timeline() {
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2">
-        <button onClick={onSplit} disabled={!selectedClipId} className="btn-soft !py-1.5 text-xs" title="Böl (S)">
+        <button onClick={onSplit} disabled={!selectedClipId} className="btn-soft !py-1.5 text-xs" title="Böl (S veya Ctrl+B)">
           <Scissors className="h-3.5 w-3.5" /> Böl
         </button>
         <button
@@ -406,7 +406,10 @@ export default function Timeline() {
                         <Scissors className="absolute -left-1 top-1 h-2.5 w-2.5 text-rose-300" />
                       </div>
                     )}
-                    <span className="absolute left-1.5 top-1 max-w-[90%] truncate text-[10px] font-medium text-white/90">
+                    <span className="absolute left-1 top-1 z-[5] grid h-4 min-w-[16px] place-items-center rounded-full bg-brand-500/80 px-1 text-[9px] font-bold tabular-nums text-white">
+                      {i + 1}
+                    </span>
+                    <span className="absolute left-6 top-1 max-w-[70%] truncate text-[10px] font-medium text-white/90">
                       {asset?.name || "klip"}
                     </span>
                     {/* trim handles */}

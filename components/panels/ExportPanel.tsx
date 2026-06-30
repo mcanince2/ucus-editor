@@ -5,8 +5,8 @@ import { Download, Loader2, CheckCircle2, AlertCircle, Clapperboard, Sparkles, X
 import { useEditor } from "@/lib/store";
 import { startExport, getExportJob, cancelExport } from "@/lib/api";
 import { PanelHeader, Segmented, Toggle, Field } from "@/components/ui";
-import { ASPECT_PRESETS, QUALITY_PRESETS } from "@/lib/constants";
-import type { AspectRatio, ExportQuality, ExportJob, ProjectDoc } from "@/lib/types";
+import { ASPECT_PRESETS, QUALITY_PRESETS, SERIES_PRESETS } from "@/lib/constants";
+import type { AspectRatio, ExportQuality, ExportJob, ProjectDoc, SeriesType } from "@/lib/types";
 
 export default function ExportPanel() {
   const settings = useEditor((s) => s.settings);
@@ -107,6 +107,21 @@ export default function ExportPanel() {
       />
 
       <div className="space-y-4">
+        <Field label="Seri türü" hint="Dosya adı otomatik">
+          <Segmented<SeriesType>
+            value={settings.seriesType}
+            onChange={(v) => setSettings({ seriesType: v })}
+            options={[
+              { value: "minik", label: "Minik Pilotlar" },
+              { value: "gonullu", label: "Gönüllü" },
+            ]}
+          />
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            Dosya adı: <span className="font-medium text-brand-300">{SERIES_PRESETS[settings.seriesType].fileBase}_N</span>
+            <span className="text-slate-600"> · her başarılı dışa aktarımda sayaç +1</span>
+          </p>
+        </Field>
+
         <div>
           <p className="panel-title mb-2">En-boy oranı</p>
           <div className="grid grid-cols-2 gap-1.5">
@@ -199,6 +214,11 @@ export default function ExportPanel() {
                 </div>
                 <h3 className="text-lg font-semibold text-white">Video hazır! 🎉</h3>
                 <p className="mt-1 text-xs text-slate-400">Final MP4 oluşturuldu.</p>
+                {job.outName && (
+                  <p className="mt-2 truncate rounded-lg bg-black/30 px-3 py-1.5 text-[11px] font-medium text-brand-200" title={job.outName}>
+                    {job.outName}
+                  </p>
+                )}
                 <a href={job.downloadUrl} download className="btn-primary mt-5 w-full !py-3">
                   <Download className="h-4 w-4" /> Videoyu İndir
                 </a>

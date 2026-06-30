@@ -119,9 +119,14 @@ export default function MediaPanel() {
             onDragStart={() => (dragIdx.current = i)}
             onDragOver={(e) => e.preventDefault()}
             onDrop={() => onReorderDrop(i)}
-            className="group flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2 transition-colors hover:border-white/15"
+            className="group flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2 transition-colors hover:border-white/15"
           >
-            <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-600" />
+            <div className="flex shrink-0 cursor-grab flex-col items-center gap-0.5">
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-brand-500/20 text-[10px] font-bold tabular-nums text-brand-200">
+                {i + 1}
+              </span>
+              <GripVertical className="h-3.5 w-3.5 text-slate-600" />
+            </div>
             <div className="relative h-12 w-[72px] shrink-0 overflow-hidden rounded-lg bg-black">
               {a.thumbnail ? (
                 // eslint-disable-next-line @next/next/no-img-element

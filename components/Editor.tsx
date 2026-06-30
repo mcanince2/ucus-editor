@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, CheckCircle2, AlertCircle, Info } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { fetchHealth } from "@/lib/api";
-import { buildTimeline, timelineToSource } from "@/lib/timeline";
+import { buildTimeline, timelineToSource, clipAtTime } from "@/lib/timeline";
 import Topbar from "./Topbar";
 import NavRail from "./NavRail";
 import Inspector from "./Inspector";
@@ -100,6 +100,20 @@ export default function Editor() {
 
   // Global keyboard shortcuts.
   useEffect(() => {
+    // Split the clip at the playhead — uses the selected clip when the
+    // playhead is inside it, otherwise whichever clip sits under the playhead.
+    const splitAtPlayhead = () => {
+      const s = useEditor.getState();
+      const tl = buildTimeline(s.clips);
+      const inside = (c: { start: number; end: number } | undefined | null) =>
+        !!c && s.currentTime > c.start + 0.05 && s.currentTime < c.end - 0.05;
+      let placed = s.selectedClipId ? tl.clips.find((c) => c.id === s.selectedClipId) : null;
+      if (!inside(placed)) placed = clipAtTime(tl, s.currentTime);
+      if (!inside(placed) || !placed) return;
+      if (s.selectedClipId !== placed.id) s.selectClip(placed.id);
+      s.splitClipAtSource(placed.id, timelineToSource(placed, s.currentTime));
+    };
+
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
@@ -112,18 +126,19 @@ export default function Editor() {
         else s.undo();
         return;
       }
+      // Ctrl/Cmd+B → split the clip under the playhead (or the selected one).
+      if (mod && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        splitAtPlayhead();
+        return;
+      }
       if (typing) return;
 
       if (e.code === "Space") {
         e.preventDefault();
         s.togglePlay();
       } else if (e.key === "s" || e.key === "S") {
-        const id = s.selectedClipId;
-        if (!id) return;
-        const placed = buildTimeline(s.clips).clips.find((c) => c.id === id);
-        if (placed && s.currentTime > placed.start + 0.05 && s.currentTime < placed.end - 0.05) {
-          s.splitClipAtSource(id, timelineToSource(placed, s.currentTime));
-        }
+        splitAtPlayhead();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (s.selectedClipId) s.removeClip(s.selectedClipId);
         else if (s.selectedCueId) s.removeCue(s.selectedCueId);
