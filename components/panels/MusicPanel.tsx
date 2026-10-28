@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Music2, UploadCloud, Play, Pause, Check, X } from "lucide-react";
+import { Music2, UploadCloud, Play, Pause, Check, X, AudioWaveform, AlertTriangle } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { fetchMusic, uploadFile } from "@/lib/api";
 import { uid } from "@/lib/format";
@@ -12,6 +12,9 @@ import clsx from "clsx";
 export default function MusicPanel() {
   const music = useEditor((s) => s.music);
   const setMusic = useEditor((s) => s.setMusic);
+  const settings = useEditor((s) => s.settings);
+  const setSettings = useEditor((s) => s.setSettings);
+  const health = useEditor((s) => s.health);
   const addAsset = useEditor((s) => s.addAsset);
   const updateAsset = useEditor((s) => s.updateAsset);
   const showToast = useEditor((s) => s.showToast);
@@ -72,10 +75,54 @@ export default function MusicPanel() {
     <div>
       <PanelHeader
         icon={<Music2 className="h-4 w-4" />}
-        title="Müzik"
-        subtitle="Hazır parçalardan seçin veya kendi müziğinizi yükleyin. Konuşma sırasında otomatik kısılır."
+        title="Müzik & Ses"
+        subtitle="Arka plan müziği ve konuşma sesi temizliği. Müzik konuşma sırasında otomatik kısılır."
       />
 
+      {/* ── Speech cleanup ── */}
+      <p className="panel-title mb-2 flex items-center gap-1.5">
+        <AudioWaveform className="h-3.5 w-3.5" /> Ses temizliği
+      </p>
+      <div className="mb-4 space-y-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3">
+        <Toggle
+          label="Arka plan gürültüsünü sil"
+          hint="RNNoise sinir ağı ile rüzgar, uğultu, kalabalık sesi gibi arka plan gürültüsünü konuşmadan ayıklar."
+          checked={settings.noiseSuppression}
+          onChange={(v) => setSettings({ noiseSuppression: v })}
+        />
+        {settings.noiseSuppression && (
+          <Slider
+            label="Temizleme gücü"
+            min={0.3}
+            max={1}
+            step={0.05}
+            value={settings.noiseStrength}
+            onChange={(v) => setSettings({ noiseStrength: v })}
+            format={(v) => `${Math.round(v * 100)}%`}
+          />
+        )}
+        <Toggle
+          label="Hafif gürültü azaltma"
+          hint="Sabit uğultuyu hafifçe bastırır (FFT). RNNoise ile birlikte kullanılabilir."
+          checked={settings.denoise}
+          onChange={(v) => setSettings({ denoise: v })}
+        />
+        <Toggle
+          label="Sesi normalize et"
+          hint="Konuşma seviyesini dengeler (loudnorm)."
+          checked={settings.normalizeVoice}
+          onChange={(v) => setSettings({ normalizeVoice: v })}
+        />
+        {health && health.noiseSuppression === false && settings.noiseSuppression && (
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-200/90">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Bu sunucuda RNNoise (ffmpeg arnndn) bulunamadı; gürültü silme export'ta atlanır.
+          </p>
+        )}
+        <p className="text-[10px] text-slate-500">Temizlik dışa aktarırken uygulanır; önizlemede duyulmaz.</p>
+      </div>
+
+      <p className="panel-title mb-2">Arka plan müziği</p>
       <div className="mb-3 flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2">
         <span className="text-xs text-slate-300">
           {music.source === "none" ? "Müzik kapalı" : music.name || "Seçili parça"}

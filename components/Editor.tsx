@@ -19,7 +19,7 @@ import LayersPanel from "./panels/LayersPanel";
 import ExportPanel from "./panels/ExportPanel";
 import CommentsPanel from "./panels/CommentsPanel";
 import ProjectSync from "./ProjectSync";
-import { saveCurrentProject } from "@/lib/project-client";
+import { SAVE_REQUEST_EVENT } from "./Topbar";
 
 function ActivePanel() {
   const panel = useEditor((s) => s.activePanel);
@@ -128,7 +128,7 @@ export default function Editor() {
       // Ctrl/Cmd+S → save to the cloud.
       if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void saveCurrentProject();
+        window.dispatchEvent(new Event(SAVE_REQUEST_EVENT));
         return;
       }
       if (mod && e.key.toLowerCase() === "z") {

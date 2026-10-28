@@ -159,6 +159,10 @@ export interface ProjectSettings {
   fps: number;
   normalizeVoice: boolean; // loudnorm on speech
   denoise: boolean; // light afftdn on speech
+  /** RNNoise (arnndn) background-noise removal on speech at export. */
+  noiseSuppression: boolean;
+  /** 0..1 how much of the cleaned signal to use (arnndn mix). */
+  noiseStrength: number;
   blurFill: boolean; // blurred background fill when padding is needed
   intro: boolean; // 1s branded intro
   introTitle: string;
@@ -265,6 +269,8 @@ export interface HealthInfo {
   transcribeReady: boolean;
   provider: string;
   whisperModel: string;
+  /** ffmpeg has the arnndn filter and the RNNoise model file is present. */
+  noiseSuppression?: boolean;
 }
 
 export interface ProbeResult {
