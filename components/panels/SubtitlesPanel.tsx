@@ -38,10 +38,17 @@ export default function SubtitlesPanel() {
       showToast("error", "Konuşma tanıma sağlayıcısı yok.");
       return;
     }
-    const curClips = useEditor.getState().clips;
+    let curClips = useEditor.getState().clips;
     if (!curClips.length) {
-      showToast("error", "Önce otomatik kurguyu çalıştırın.");
-      return;
+      // No timeline yet → place the raw clips uncut; auto-edit is optional.
+      const st = useEditor.getState();
+      const ready = st.assets.filter((a) => a.kind === "video" && a.status === "ready");
+      if (!ready.length) {
+        showToast("error", "Önce klip yükleyin.");
+        return;
+      }
+      st.buildAutoTimeline();
+      curClips = useEditor.getState().clips;
     }
     const placed = buildTimeline(curClips).clips;
     const ids = Array.from(new Set(curClips.map((c) => c.assetId)));
@@ -180,7 +187,8 @@ export default function SubtitlesPanel() {
         <p className="panel-title mb-2">Satırlar ({subtitles.length})</p>
         {subtitles.length === 0 ? (
           <EmptyHint title="Altyazı yok">
-            “Yeniden Oluştur” ile Türkçe konuşmadan otomatik altyazı üretin.
+            “Yeniden Oluştur” ile Türkçe konuşmadan otomatik altyazı üretin. Otomatik kurgu şart değil:
+            zaman çizelgesi boşsa klipler kesilmeden eklenir.
           </EmptyHint>
         ) : (
           <div className="max-h-[40vh] space-y-1.5 overflow-y-auto pr-1">

@@ -91,6 +91,64 @@ export interface BuildResult {
   pass2: string[] | null;
   mainDuration: number; // duration of clips section
   totalDuration: number; // including intro/outro
+  plan: TransitionPlan;
+}
+
+/**
+ * Where crossfades actually happen and how much timeline time they eat.
+ *
+ * A crossfade overlaps two clips by `xd` seconds, so everything after it lands
+ * `xd` seconds EARLIER in the rendered file than on the (non-overlapping)
+ * editor timeline. Subtitles/overlays are authored on the editor timeline, so
+ * the export has to subtract `shiftBefore[clipIndex]` from their times —
+ * otherwise captions run ahead of the picture by 0.35 s per cut.
+ *
+ * Transitions are only applied at boundaries the clip asks for
+ * (`transition !== "none"`, i.e. between different source videos), never at
+ * every silence cut inside one take.
+ */
+export interface TransitionPlan {
+  xd: number;
+  /** fadeBefore[i] → crossfade between clip i-1 and clip i. */
+  fadeBefore: boolean[];
+  /** Seconds removed from the timeline before clip i starts. */
+  shiftBefore: number[];
+}
+
+export function planTransitions(
+  clips: { durationOut: number; transition: TransitionType }[],
+  enabled: boolean,
+  transitionDuration: number
+): TransitionPlan {
+  const n = clips.length;
+  const fadeBefore = clips.map((c, i) => i > 0 && enabled && c.transition !== "none");
+  let xd = 0;
+  if (fadeBefore.some(Boolean)) {
+    let minAdj = Infinity;
+    for (let i = 1; i < n; i++) {
+      if (fadeBefore[i]) minAdj = Math.min(minAdj, clips[i - 1].durationOut, clips[i].durationOut);
+    }
+    xd = Math.min(transitionDuration, minAdj * 0.4, 1.0);
+    if (!(xd >= 0.08)) xd = 0; // too short to be safe → hard cut
+  }
+  if (xd === 0) fadeBefore.fill(false);
+  const shiftBefore: number[] = [];
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    if (fadeBefore[i]) acc += xd;
+    shiftBefore.push(acc);
+  }
+  return { xd, fadeBefore, shiftBefore };
+}
+
+/**
+ * Map an editor-timeline time to rendered-file time under a transition plan.
+ * `starts` are the editor-timeline start times of each clip.
+ */
+export function timelineToExportTime(t: number, starts: number[], plan: TransitionPlan): number {
+  let k = 0;
+  for (let i = 0; i < starts.length; i++) if (t >= starts[i]) k = i;
+  return Math.max(0, t - (plan.shiftBefore[k] ?? 0));
 }
 
 function tempoChain(speed: number): string {
@@ -139,18 +197,21 @@ export function buildExport(input: BuildInput): BuildResult {
   const fps = input.fps;
   const n = input.clips.length;
 
-  // ── Effective transition duration (clamped to safe range). ──
-  const minDur = Math.min(...input.clips.map((c) => c.durationOut), 999);
-  let xd = 0;
-  if (input.transitions && n > 1) {
-    xd = Math.min(input.transitionDuration, minDur * 0.4, 1.0);
-    if (xd < 0.08) xd = 0; // too short to be safe → hard cut
+  // ── Transitions: only at clip boundaries that ask for one. ──
+  const plan = planTransitions(input.clips, input.transitions && n > 1, input.transitionDuration);
+  const xd = plan.xd;
+
+  // Consecutive clips without a transition between them form a group that is
+  // hard-concatenated; crossfades happen between groups only.
+  const groups: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    // A crossfade INTO clip i opens a new group; otherwise it joins the last.
+    if (i === 0 || plan.fadeBefore[i]) groups.push([i]);
+    else groups[groups.length - 1].push(i);
   }
 
   const mainDuration =
-    xd > 0
-      ? input.clips.reduce((s, c) => s + c.durationOut, 0) - (n - 1) * xd
-      : input.clips.reduce((s, c) => s + c.durationOut, 0);
+    input.clips.reduce((s, c) => s + c.durationOut, 0) - (groups.length - 1) * xd;
 
   // ════════════════════ PASS 1 ════════════════════
   const args1: string[] = [];
@@ -205,31 +266,44 @@ export function buildExport(input: BuildInput): BuildResult {
     }
   }
 
-  // Concatenate or crossfade.
-  if (xd > 0) {
-    // Video xfade chain.
-    let prevV = `v0`;
-    let acc = input.clips[0].durationOut;
-    for (let i = 1; i < n; i++) {
-      const off = (acc - xd).toFixed(3);
-      const outV = i === n - 1 ? "cv" : `xv${i}`;
-      fc.push(`[${prevV}][v${i}]xfade=transition=fade:duration=${xd.toFixed(3)}:offset=${off}[${outV}]`);
-      prevV = outV;
-      acc = acc + input.clips[i].durationOut - xd;
+  // Hard-concat each group, then crossfade between groups.
+  const groupV: string[] = [];
+  const groupA: string[] = [];
+  const groupDur: number[] = [];
+  groups.forEach((g, gi) => {
+    groupDur.push(g.reduce((s, i) => s + input.clips[i].durationOut, 0));
+    if (g.length === 1) {
+      groupV.push(`v${g[0]}`);
+      groupA.push(`a${g[0]}`);
+      return;
     }
-    if (n === 1) fc.push(`[v0]copy[cv]`);
+    const labels = g.map((i) => `[v${i}][a${i}]`).join("");
+    fc.push(`${labels}concat=n=${g.length}:v=1:a=1[gv${gi}][ga${gi}]`);
+    groupV.push(`gv${gi}`);
+    groupA.push(`ga${gi}`);
+  });
+
+  if (groups.length === 1) {
+    fc.push(`[${groupV[0]}]copy[cv]`);
+    fc.push(`[${groupA[0]}]acopy[ca]`);
+  } else {
+    // Video xfade chain across groups.
+    let prevV = groupV[0];
+    let acc = groupDur[0];
+    for (let gi = 1; gi < groups.length; gi++) {
+      const off = (acc - xd).toFixed(3);
+      const outV = gi === groups.length - 1 ? "cv" : `xv${gi}`;
+      fc.push(`[${prevV}][${groupV[gi]}]xfade=transition=fade:duration=${xd.toFixed(3)}:offset=${off}[${outV}]`);
+      prevV = outV;
+      acc = acc + groupDur[gi] - xd;
+    }
     // Audio acrossfade chain.
-    let prevA = `a0`;
-    for (let i = 1; i < n; i++) {
-      const outA = i === n - 1 ? "ca" : `xa${i}`;
-      fc.push(`[${prevA}][a${i}]acrossfade=d=${xd.toFixed(3)}[${outA}]`);
+    let prevA = groupA[0];
+    for (let gi = 1; gi < groups.length; gi++) {
+      const outA = gi === groups.length - 1 ? "ca" : `xa${gi}`;
+      fc.push(`[${prevA}][${groupA[gi]}]acrossfade=d=${xd.toFixed(3)}[${outA}]`);
       prevA = outA;
     }
-    if (n === 1) fc.push(`[a0]acopy[ca]`);
-  } else {
-    const labels: string[] = [];
-    for (let i = 0; i < n; i++) labels.push(`[v${i}][a${i}]`);
-    fc.push(`${labels.join("")}concat=n=${n}:v=1:a=1[cv][ca]`);
   }
 
   // Speech audio processing.
@@ -489,7 +563,23 @@ export function buildExport(input: BuildInput): BuildResult {
     pass2 = a2;
   }
 
-  return { pass1: args1, pass2, mainDuration, totalDuration };
+  return { pass1: args1, pass2, mainDuration, totalDuration, plan };
+}
+
+/**
+ * Pull the useful line out of ffmpeg's stderr. The last 400 chars are usually
+ * progress noise; the real reason is an earlier line mentioning an error.
+ */
+export function ffmpegErrorHint(stderr: string, max = 360): string {
+  const lines = (stderr || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const bad = lines.filter((l) =>
+    /error|invalid|failed|cannot|could not|no such|not found|unable|killed|out of memory|conversion failed/i.test(l)
+  );
+  const pick = bad.length ? bad.slice(-3).join(" | ") : lines.slice(-3).join(" | ");
+  return pick.slice(-max);
 }
 
 function sanitizeText(t: string): string {

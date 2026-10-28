@@ -15,11 +15,19 @@ export const THUMB_DIR = path.join(DATA_DIR, "thumbs");
 export const MUSIC_DIR = path.join(DATA_DIR, "music");
 export const EXPORT_DIR = path.join(DATA_DIR, "exports");
 export const TMP_DIR = path.join(DATA_DIR, "tmp");
+// Browser-friendly 720p H.264 copies of uploaded videos, used ONLY by the
+// in-app preview player (phones record 4K HEVC .MOV that browsers can't play).
+export const PROXY_DIR = path.join(DATA_DIR, "proxies");
 
 export function ensureDirs() {
-  for (const d of [DATA_DIR, UPLOAD_DIR, THUMB_DIR, MUSIC_DIR, EXPORT_DIR, TMP_DIR]) {
+  for (const d of [DATA_DIR, UPLOAD_DIR, THUMB_DIR, MUSIC_DIR, EXPORT_DIR, TMP_DIR, PROXY_DIR]) {
     fs.mkdirSync(d, { recursive: true });
   }
+}
+
+export function proxyPath(id: string): string {
+  ensureDirs();
+  return path.join(PROXY_DIR, `${id}.mp4`);
 }
 
 /** Locate a stored upload by id. We store as <id>.<ext>; find the match. */

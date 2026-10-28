@@ -3,7 +3,7 @@
 import { useMemo, useRef } from "react";
 import { Layers, Film, ImageIcon, Music2, Trash2, Plus } from "lucide-react";
 import { useEditor } from "@/lib/store";
-import { uploadFile } from "@/lib/api";
+import { uploadFile, watchProxy } from "@/lib/api";
 import { buildTimeline } from "@/lib/timeline";
 import { uid, formatTime } from "@/lib/format";
 import { PanelHeader, Slider, EmptyHint } from "@/components/ui";
@@ -52,6 +52,7 @@ export default function LayersPanel() {
     try {
       const meta = await uploadFile(file, id, (p) => updateAsset(id, { progress: p }));
       updateAsset(id, { ...meta, status: "ready" });
+      if (isVideo) watchProxy(id, (patch) => updateAsset(id, patch));
       const dur = isImage ? Math.min(5, duration) : Math.min(meta.duration || 5, duration);
       const overlay: Overlay = {
         id: uid("ov_"),

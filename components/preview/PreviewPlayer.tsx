@@ -10,6 +10,10 @@ import SubtitleOverlay from "./SubtitleOverlay";
 import LogoOverlay from "./LogoOverlay";
 import OverlayLayer from "./OverlayLayer";
 import AudioLayer from "./AudioLayer";
+import type { MediaAsset } from "@/lib/types";
+
+/** What the <video> elements play: the browser-friendly proxy when it exists. */
+const previewUrl = (a: MediaAsset) => a.proxyUrl || a.url;
 
 export default function PreviewPlayer() {
   // Two stacked <video> elements (double buffer): the visible one keeps showing
@@ -77,11 +81,12 @@ export default function PreviewPlayer() {
     const bi = 1 - frontIdxRef.current;
     const bv = el(bi);
     if (!bv) return;
-    if (loaded[bi].current === nextClip.assetId) return;
     const asset = assetMapRef.current.get(nextClip.assetId);
     if (!asset) return;
-    loaded[bi].current = nextClip.assetId;
-    bv.src = asset.url;
+    const src = previewUrl(asset);
+    if (loaded[bi].current === src) return;
+    loaded[bi].current = src;
+    bv.src = src;
     const onL = () => {
       bv.removeEventListener("loadeddata", onL);
       try {
@@ -103,10 +108,11 @@ export default function PreviewPlayer() {
     const asset = assetMapRef.current.get(clip.assetId);
     if (!asset) return;
     const desired = timelineToSource(clip, t);
+    const src = previewUrl(asset);
     const fi = frontIdxRef.current;
     const fv = el(fi);
 
-    if (loaded[fi].current === clip.assetId && fv) {
+    if (loaded[fi].current === src && fv) {
       setProps(fv, clip);
       try {
         fv.currentTime = desired;
@@ -120,9 +126,9 @@ export default function PreviewPlayer() {
     const bi = 1 - fi;
     const bv = el(bi);
     if (!bv) return;
-    loaded[bi].current = clip.assetId;
+    loaded[bi].current = src;
     stallRef.current = true;
-    bv.src = asset.url;
+    bv.src = src;
     let done = false;
     const cleanup = () => {
       bv.removeEventListener("loadeddata", finish);
@@ -208,7 +214,9 @@ export default function PreviewPlayer() {
       if (clip) {
         const fi = frontIdxRef.current;
         const fv = el(fi);
-        if (loaded[fi].current === clip.assetId && !stallRef.current && fv) {
+        const asset = assetMapRef.current.get(clip.assetId);
+        const src = asset ? previewUrl(asset) : null;
+        if (src && loaded[fi].current === src && !stallRef.current && fv) {
           const desired = timelineToSource(clip, p);
           setProps(fv, clip);
           if (fv.paused && getPlaying()) fv.play().catch(() => {});
@@ -218,7 +226,8 @@ export default function PreviewPlayer() {
             } catch {}
           }
           const next = tl.clips[clip.index + 1];
-          if (next && next.assetId !== clip.assetId && loaded[1 - fi].current !== next.assetId) {
+          const nextAsset = next ? assetMapRef.current.get(next.assetId) : undefined;
+          if (next && nextAsset && next.assetId !== clip.assetId && loaded[1 - fi].current !== previewUrl(nextAsset)) {
             preload(next);
           }
         } else if (!stallRef.current) {
@@ -266,17 +275,22 @@ export default function PreviewPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekNonce]);
 
-  // Clips changed while paused → refresh displayed frame.
+  // Clips (or an asset's preview source, e.g. its proxy just became ready)
+  // changed while paused → refresh the displayed frame.
   useEffect(() => {
     if (!useEditor.getState().playing) {
-      const ids = new Set(clips.map((c) => c.assetId));
-      if (loadedA.current && !ids.has(loadedA.current)) loadedA.current = null;
-      if (loadedB.current && !ids.has(loadedB.current)) loadedB.current = null;
+      const urls = new Set<string>();
+      for (const c of clips) {
+        const a = assetMap.get(c.assetId);
+        if (a) urls.add(previewUrl(a));
+      }
+      if (loadedA.current && !urls.has(loadedA.current)) loadedA.current = null;
+      if (loadedB.current && !urls.has(loadedB.current)) loadedB.current = null;
       playheadRef.current = useEditor.getState().currentTime;
       applyAt(playheadRef.current, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clips]);
+  }, [clips, assetMap]);
 
   // Music element wiring.
   useEffect(() => {
@@ -346,7 +360,16 @@ export default function PreviewPlayer() {
           )}
           {hasContent &&
             overlays.map((o) => (
-              <OverlayLayer key={o.id} overlay={o} url={assetMap.get(o.assetId)?.url} time={currentTime} playing={playing} />
+              <OverlayLayer
+                key={o.id}
+                overlay={o}
+                url={(() => {
+                  const a = assetMap.get(o.assetId);
+                  return a ? previewUrl(a) : undefined;
+                })()}
+                time={currentTime}
+                playing={playing}
+              />
             ))}
           {hasContent && <LogoOverlay logo={logo} url={logoUrl} />}
           {hasContent && <SubtitleOverlay cues={subtitles} style={subtitleStyle} time={currentTime} />}

@@ -5,7 +5,7 @@ import { Scissors, ZoomIn, ZoomOut, Trash2, Type, Music2, ImageIcon, Volume2, La
 import { useEditor } from "@/lib/store";
 import { buildTimeline, clipAtTime, timelineToSource } from "@/lib/timeline";
 import { formatTime, uid } from "@/lib/format";
-import { uploadFile } from "@/lib/api";
+import { uploadFile, watchProxy } from "@/lib/api";
 import type { MediaAsset, Overlay } from "@/lib/types";
 import clsx from "clsx";
 
@@ -72,6 +72,7 @@ export default function Timeline() {
     try {
       const meta = await uploadFile(file, id, () => {});
       updateAsset(id, { ...meta, status: "ready" });
+      if (isVideo) watchProxy(id, (patch) => updateAsset(id, patch));
       const dur = isImage
         ? Math.min(5, timeline.duration || 5)
         : Math.min(meta.duration || 5, timeline.duration || meta.duration || 5);

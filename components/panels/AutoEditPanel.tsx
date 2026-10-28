@@ -69,10 +69,16 @@ export default function AutoEditPanel() {
       showToast("error", "Konuşma tanıma sağlayıcısı yok. Yerel `whisper` kurun veya OPENAI_API_KEY ekleyin.");
       return;
     }
-    const curClips = useEditor.getState().clips;
+    let curClips = useEditor.getState().clips;
     if (!curClips.length) {
-      showToast("error", "Önce otomatik kurguyu çalıştırın.");
-      return;
+      // No timeline yet → place the raw clips as they are (no silence cuts) so
+      // subtitles don't depend on running the auto-edit first.
+      if (!readyVideos.length) {
+        showToast("error", "Önce klip yükleyin.");
+        return;
+      }
+      buildAutoTimeline();
+      curClips = useEditor.getState().clips;
     }
     const placed = buildTimeline(curClips).clips;
     const assetIds = Array.from(new Set(curClips.map((c) => c.assetId)));
