@@ -66,9 +66,11 @@ export default function PreviewPlayer() {
   const el = (i: number) => videos[i].current;
   const getPlaying = () => useEditor.getState().playing;
   const clampRate = (s: number) => Math.max(0.25, Math.min(4, s || 1));
-  const setProps = (v: HTMLVideoElement, clip: { muted: boolean; speed: number }) => {
+  const setProps = (v: HTMLVideoElement, clip: { muted: boolean; speed: number; volume?: number }) => {
     v.muted = clip.muted;
     v.playbackRate = clampRate(clip.speed);
+    // Browsers cap element volume at 1; gains above 1 only apply in the export.
+    v.volume = Math.max(0, Math.min(1, clip.volume ?? 1));
   };
 
   const logoUrl = logo.assetId ? assetMap.get(logo.assetId)?.url : undefined;

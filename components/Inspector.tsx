@@ -93,16 +93,61 @@ export default function Inspector() {
             />
           </Field>
 
-          <button
-            onClick={() => {
-              pushHistory();
-              updateClip(clip.id, { muted: !clip.muted });
-            }}
-            className="flex w-full items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 hover:bg-white/[0.04]"
-          >
-            <span className="text-xs font-medium text-slate-200">Klip sesi</span>
-            {clip.muted ? <VolumeX className="h-4 w-4 text-rose-400" /> : <Volume2 className="h-4 w-4 text-emerald-400" />}
-          </button>
+          <div className="space-y-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+            <button
+              onClick={() => {
+                pushHistory();
+                updateClip(clip.id, { muted: !clip.muted });
+              }}
+              className="flex w-full items-center justify-between"
+            >
+              <span className="text-xs font-medium text-slate-200">Klip sesi</span>
+              {clip.muted ? (
+                <span className="flex items-center gap-1 text-[11px] text-rose-300">
+                  <VolumeX className="h-4 w-4" /> Kapalı
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[11px] text-emerald-300">
+                  <Volume2 className="h-4 w-4" /> Açık
+                </span>
+              )}
+            </button>
+            {!clip.muted && (
+              <>
+                <Slider
+                  label="Ses seviyesi"
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={clip.volume ?? 1}
+                  onChange={(v) => updateClip(clip.id, { volume: v })}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                />
+                <div className="grid grid-cols-5 gap-1">
+                  {[0.25, 0.5, 1, 1.5, 2].map((vol) => (
+                    <button
+                      key={vol}
+                      onClick={() => {
+                        pushHistory();
+                        updateClip(clip.id, { volume: vol });
+                      }}
+                      className={
+                        "rounded-md py-1 text-[10px] font-medium tabular-nums transition-colors " +
+                        (Math.abs((clip.volume ?? 1) - vol) < 0.001
+                          ? "bg-brand-500 text-white"
+                          : "bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200")
+                      }
+                    >
+                      {Math.round(vol * 100)}%
+                    </button>
+                  ))}
+                </div>
+                {(clip.volume ?? 1) > 1 && (
+                  <p className="text-[10px] text-slate-500">%100 üstü yükseltme sadece dışa aktarmada duyulur.</p>
+                )}
+              </>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <button

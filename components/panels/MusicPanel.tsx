@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Music2, UploadCloud, Play, Pause, Check, X, AudioWaveform, AlertTriangle } from "lucide-react";
+import { Music2, UploadCloud, Play, Pause, Check, X, AudioWaveform, AlertTriangle, Headphones, Loader2, CheckCircle2 } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { fetchMusic, uploadFile } from "@/lib/api";
 import { uid } from "@/lib/format";
@@ -15,6 +15,57 @@ export default function MusicPanel() {
   const settings = useEditor((s) => s.settings);
   const setSettings = useEditor((s) => s.setSettings);
   const health = useEditor((s) => s.health);
+  const clips = useEditor((s) => s.clips);
+  const selectedClipId = useEditor((s) => s.selectedClipId);
+
+  // "Örnek dinle": render 8 s of the selected (or first) clip through the real
+  // export audio chain and play it, raw vs. cleaned, so the effect is audible.
+  const [sampleBusy, setSampleBusy] = useState<"raw" | "clean" | null>(null);
+  const [samplePlaying, setSamplePlaying] = useState<"raw" | "clean" | null>(null);
+  const sampleRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => sampleRef.current?.pause(), []);
+
+  const playSample = async (raw: boolean) => {
+    const which = raw ? "raw" : "clean";
+    if (samplePlaying === which) {
+      sampleRef.current?.pause();
+      setSamplePlaying(null);
+      return;
+    }
+    const clip = clips.find((c) => c.id === selectedClipId) || clips[0];
+    if (!clip) {
+      showToast("error", "Önce zaman çizelgesine klip ekleyin.");
+      return;
+    }
+    setSampleBusy(which);
+    try {
+      const res = await fetch("/api/audio-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assetId: clip.assetId,
+          in: clip.in,
+          out: clip.out,
+          raw,
+          noiseSuppression: settings.noiseSuppression,
+          noiseStrength: settings.noiseStrength,
+          denoise: settings.denoise,
+          normalizeVoice: settings.normalizeVoice,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Örnek üretilemedi");
+      const url = URL.createObjectURL(await res.blob());
+      sampleRef.current?.pause();
+      const a = new Audio(url);
+      a.onended = () => setSamplePlaying(null);
+      await a.play();
+      sampleRef.current = a;
+      setSamplePlaying(which);
+    } catch (e: any) {
+      showToast("error", e.message);
+    }
+    setSampleBusy(null);
+  };
   const addAsset = useEditor((s) => s.addAsset);
   const updateAsset = useEditor((s) => s.updateAsset);
   const showToast = useEditor((s) => s.showToast);
@@ -113,13 +164,37 @@ export default function MusicPanel() {
           checked={settings.normalizeVoice}
           onChange={(v) => setSettings({ normalizeVoice: v })}
         />
-        {health && health.noiseSuppression === false && settings.noiseSuppression && (
+        {health && health.noiseSuppression === false && settings.noiseSuppression ? (
           <p className="flex items-start gap-1.5 text-[11px] text-amber-200/90">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             Bu sunucuda RNNoise (ffmpeg arnndn) bulunamadı; gürültü silme export'ta atlanır.
           </p>
-        )}
-        <p className="text-[10px] text-slate-500">Temizlik dışa aktarırken uygulanır; önizlemede duyulmaz.</p>
+        ) : settings.noiseSuppression && health?.noiseSuppression ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-emerald-300">
+            <CheckCircle2 className="h-3.5 w-3.5" /> RNNoise sunucuda hazır, dışa aktarmada uygulanacak.
+          </p>
+        ) : null}
+
+        {/* Hear it: raw vs. cleaned sample of the selected/first clip. */}
+        <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2">
+          <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-300">
+            <Headphones className="h-3.5 w-3.5" /> Örnek dinle (8 sn, {clips.find((c) => c.id === selectedClipId) ? "seçili klip" : "ilk klip"})
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button onClick={() => playSample(true)} disabled={!!sampleBusy || !clips.length} className="btn-soft !py-1.5 text-xs">
+              {sampleBusy === "raw" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : samplePlaying === "raw" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              Ham ses
+            </button>
+            <button onClick={() => playSample(false)} disabled={!!sampleBusy || !clips.length} className="btn-primary !py-1.5 text-xs">
+              {sampleBusy === "clean" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : samplePlaying === "clean" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              Temizlenmiş
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-slate-500">
+            Temizlik normal önizlemede duyulmaz; burada sunucu aynı zinciri 8 saniyelik örneğe uygular. Dışa aktarma
+            bitince uygulanan işlemler listelenir.
+          </p>
+        </div>
       </div>
 
       <p className="panel-title mb-2">Arka plan müziği</p>

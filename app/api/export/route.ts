@@ -96,6 +96,7 @@ export async function POST(req: Request) {
       out: c.out,
       speed: c.speed || 1,
       muted: c.muted,
+      volume: c.volume,
       transition: c.transition,
       durationOut: clipDuration(c),
       hasAudio: meta?.hasAudio ?? true,
@@ -414,11 +415,21 @@ async function runExport(
   // Only consume a counter slot on a successful render, so cancelled/failed
   // jobs never burn a number. e.g. "Minik_Pilotlarla_Roportaj_3.mp4".
   const n = nextCount(seriesType);
+  // Tell the user what audio processing really went into the file (the
+  // retry ladder may have dropped some of it).
+  const applied: string[] = [];
+  if (input.rnnoiseModel) applied.push(`Arka plan gürültüsü silindi (RNNoise %${Math.round((input.noiseStrength ?? 0.85) * 100)})`);
+  if (input.denoise) applied.push("Hafif gürültü azaltma (FFT)");
+  if (input.normalizeVoice) applied.push("Ses normalize edildi (loudnorm)");
+  if (input.music) applied.push(input.music.duck ? "Müzik eklendi, konuşmada kısıldı" : "Müzik eklendi");
+  if (input.clips.some((c) => c.volume !== undefined && Math.abs(c.volume - 1) > 0.001)) applied.push("Klip ses seviyeleri uygulandı");
+  if (input.assPath) applied.push("Altyazılar gömüldü");
   updateJob(jobId, {
     status: "done",
     progress: 100,
     stage: "Tamamlandı",
     downloadUrl: `/api/download/${jobId}`,
     outName: `${seriesFileName(seriesType, n)}.mp4`,
+    applied,
   });
 }
