@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Scissors, ZoomIn, ZoomOut, Trash2, Type, Music2, ImageIcon, Volume2, Layers, Plus, Film } from "lucide-react";
+import { Scissors, ZoomIn, ZoomOut, Trash2, Type, Music2, ImageIcon, Volume2, Layers, Plus, Film, BoxSelect } from "lucide-react";
 import { useEditor } from "@/lib/store";
-import { buildTimeline, clipAtTime, timelineToSource } from "@/lib/timeline";
+import { buildTimeline, timelineToSource } from "@/lib/timeline";
 import { formatTime, uid } from "@/lib/format";
 import { uploadFile, watchProxy } from "@/lib/api";
 import type { MediaAsset, Overlay } from "@/lib/types";
@@ -12,9 +12,15 @@ import clsx from "clsx";
 type DragMode =
   | null
   | { kind: "seek" }
-  | { kind: "trim-l" | "trim-r" | "move"; clipId: string; startX: number }
+  | { kind: "trim-l" | "trim-r"; clipId: string; startX: number }
+  /** Moving one or more clips (the whole selection) to a new slot. */
+  | { kind: "move"; clipIds: string[]; startX: number; moved: boolean }
   | { kind: "cue-l" | "cue-r"; cueId: string; startX: number }
-  | { kind: "ov-move" | "ov-r"; ovId: string; startX: number };
+  /** Dragging one or more cues in time. Becomes a plain click if barely moved. */
+  | { kind: "cue-move"; cueId: string; cueIds: string[]; startX: number; moved: boolean; shift: boolean }
+  | { kind: "ov-move" | "ov-r"; ovId: string; startX: number }
+  /** Rubber-band selection over the tracks. Client coordinates. */
+  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; additive: boolean; moved: boolean };
 
 export default function Timeline() {
   const clips = useEditor((s) => s.clips);
@@ -28,15 +34,23 @@ export default function Timeline() {
   const currentTime = useEditor((s) => s.currentTime);
   const selectedClipId = useEditor((s) => s.selectedClipId);
   const selectedCueId = useEditor((s) => s.selectedCueId);
+  const selectedClipIds = useEditor((s) => s.selectedClipIds);
+  const selectedCueIds = useEditor((s) => s.selectedCueIds);
 
   const setZoom = useEditor((s) => s.setZoom);
   const seek = useEditor((s) => s.seek);
   const selectClip = useEditor((s) => s.selectClip);
   const selectCue = useEditor((s) => s.selectCue);
+  const selectClips = useEditor((s) => s.selectClips);
+  const selectCues = useEditor((s) => s.selectCues);
+  const toggleClipSelected = useEditor((s) => s.toggleClipSelected);
+  const toggleCueSelected = useEditor((s) => s.toggleCueSelected);
+  const clearSelection = useEditor((s) => s.clearSelection);
+  const deleteSelection = useEditor((s) => s.deleteSelection);
   const updateClip = useEditor((s) => s.updateClip);
   const updateCue = useEditor((s) => s.updateCue);
-  const moveClip = useEditor((s) => s.moveClip);
-  const removeClip = useEditor((s) => s.removeClip);
+  const moveClips = useEditor((s) => s.moveClips);
+  const shiftCues = useEditor((s) => s.shiftCues);
   const splitClipAtSource = useEditor((s) => s.splitClipAtSource);
   const pushHistory = useEditor((s) => s.pushHistory);
   const addOverlay = useEditor((s) => s.addOverlay);
@@ -101,11 +115,15 @@ export default function Timeline() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
+  const videoTrackRef = useRef<HTMLDivElement>(null);
+  const subTrackRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragMode>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   const pxPerSec = zoom;
   const contentWidth = Math.max(800, timeline.duration * pxPerSec + 80);
+
+  const selectionCount = selectedClipIds.length + selectedCueIds.length;
 
   // --- helpers ---
   const clientXToTime = (clientX: number) => {
@@ -117,12 +135,63 @@ export default function Timeline() {
     return Math.max(0, (clientX - rect.left) / pxPerSec);
   };
 
+  /** Which clips / cues fall inside a client-space rectangle. */
+  const hitTest = (x0: number, y0: number, x1: number, y1: number) => {
+    const left = Math.min(x0, x1);
+    const right = Math.max(x0, x1);
+    const top = Math.min(y0, y1);
+    const bottom = Math.max(y0, y1);
+    const t0 = clientXToTime(left);
+    const t1 = clientXToTime(right);
+    const overlapsRow = (el: HTMLDivElement | null) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return bottom >= r.top && top <= r.bottom;
+    };
+    const clipIds = overlapsRow(videoTrackRef.current)
+      ? timeline.clips.filter((c) => c.end > t0 && c.start < t1).map((c) => c.id)
+      : [];
+    const cueIds = overlapsRow(subTrackRef.current)
+      ? subtitles.filter((c) => c.end > t0 && c.start < t1).map((c) => c.id)
+      : [];
+    return { clipIds, cueIds };
+  };
+
+  const applyMarquee = (m: Extract<DragMode, { kind: "marquee" }>) => {
+    const { clipIds, cueIds } = hitTest(m.x0, m.y0, m.x1, m.y1);
+    const st = useEditor.getState();
+    const prevClips = m.additive ? st.selectedClipIds : [];
+    const prevCues = m.additive ? st.selectedCueIds : [];
+    const allClips = Array.from(new Set([...prevClips, ...clipIds]));
+    const allCues = Array.from(new Set([...prevCues, ...cueIds]));
+    // Clips and cues can't be selected together (different inspectors); the
+    // row with more hits wins, clips on a tie.
+    if (allClips.length && allClips.length >= allCues.length) selectClips(allClips, st.selectedClipId);
+    else if (allCues.length) selectCues(allCues, st.selectedCueId);
+    else clearSelection();
+  };
+
   // --- global pointer handlers for active drag ---
   useEffect(() => {
     if (!drag) return;
     const onMove = (e: PointerEvent) => {
       if (drag.kind === "seek") {
         seek(Math.min(timeline.duration, clientXToTime(e.clientX)));
+        return;
+      }
+      if (drag.kind === "marquee") {
+        const moved = drag.moved || Math.abs(e.clientX - drag.x0) > 4 || Math.abs(e.clientY - drag.y0) > 4;
+        const next = { ...drag, x1: e.clientX, y1: e.clientY, moved };
+        setDrag(next);
+        if (moved) applyMarquee(next);
+        return;
+      }
+      if (drag.kind === "cue-move") {
+        const dxPx = e.clientX - drag.startX;
+        if (!drag.moved && Math.abs(dxPx) < 4) return;
+        if (!drag.moved) pushHistory();
+        shiftCues(drag.cueIds, dxPx / pxPerSec);
+        setDrag({ ...drag, startX: e.clientX, moved: true });
         return;
       }
       if (drag.kind === "cue-l" || drag.kind === "cue-r") {
@@ -149,7 +218,19 @@ export default function Timeline() {
         setDrag({ ...drag, startX: e.clientX });
         return;
       }
-      if (drag.kind !== "trim-l" && drag.kind !== "trim-r" && drag.kind !== "move") return;
+      if (drag.kind === "move") {
+        const moved = drag.moved || Math.abs(e.clientX - drag.startX) > 4;
+        if (!moved) return;
+        if (!drag.moved) setDrag({ ...drag, moved: true });
+        const t = clientXToTime(e.clientX);
+        let idx = 0;
+        for (const c of timeline.clips) {
+          if (t > c.start + c.duration / 2) idx++;
+        }
+        setDropIndex(idx);
+        return;
+      }
+      if (drag.kind !== "trim-l" && drag.kind !== "trim-r") return;
       const clip = useEditor.getState().clips.find((c) => c.id === drag.clipId);
       if (!clip) return;
       const asset = assetMap.get(clip.assetId);
@@ -159,27 +240,28 @@ export default function Timeline() {
         const newIn = Math.max(0, Math.min(clip.out - 0.15, clip.in + dxSec));
         updateClip(clip.id, { in: newIn });
         setDrag({ ...drag, startX: e.clientX });
-      } else if (drag.kind === "trim-r") {
+      } else {
         const maxOut = asset?.duration || clip.out;
         const newOut = Math.min(maxOut, Math.max(clip.in + 0.15, clip.out + dxSec));
         updateClip(clip.id, { out: newOut });
         setDrag({ ...drag, startX: e.clientX });
-      } else if (drag.kind === "move") {
-        const t = clientXToTime(e.clientX);
-        let idx = 0;
-        for (const c of timeline.clips) {
-          if (t > c.start + c.duration / 2) idx++;
-        }
-        setDropIndex(idx);
       }
     };
-    const onUp = () => {
-      if (drag.kind === "move" && dropIndex !== null) {
-        const from = clips.findIndex((c) => c.id === drag.clipId);
-        if (from >= 0) {
-          let to = dropIndex;
-          if (to > from) to -= 1;
-          if (to !== from) moveClip(from, to);
+    const onUp = (e: PointerEvent) => {
+      if (drag.kind === "move" && drag.moved && dropIndex !== null) {
+        moveClips(drag.clipIds, dropIndex);
+      }
+      if (drag.kind === "marquee" && !drag.moved) {
+        // Plain click on empty track → clear selection + move the playhead.
+        if (!drag.additive) clearSelection();
+        seek(Math.min(timeline.duration, clientXToTime(e.clientX)));
+      }
+      if (drag.kind === "cue-move" && !drag.moved) {
+        if (drag.shift) toggleCueSelected(drag.cueId);
+        else {
+          selectCue(drag.cueId);
+          const cue = useEditor.getState().subtitles.find((c) => c.id === drag.cueId);
+          if (cue) seek(cue.start + 0.01);
         }
       }
       setDrag(null);
@@ -206,6 +288,35 @@ export default function Timeline() {
     splitClipAtSource(id, srcTime);
   };
 
+  /** Start a rubber-band selection from an empty spot on the tracks. */
+  const beginMarquee = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (!target.dataset.bg) return;
+    e.preventDefault();
+    setDrag({
+      kind: "marquee",
+      x0: e.clientX,
+      y0: e.clientY,
+      x1: e.clientX,
+      y1: e.clientY,
+      additive: e.shiftKey || e.metaKey || e.ctrlKey,
+      moved: false,
+    });
+  };
+
+  // Marquee rectangle in content coordinates (for rendering).
+  const marqueeRect = useMemo(() => {
+    if (!drag || drag.kind !== "marquee" || !drag.moved || !tracksRef.current) return null;
+    const r = tracksRef.current.getBoundingClientRect();
+    return {
+      left: Math.min(drag.x0, drag.x1) - r.left,
+      top: Math.min(drag.y0, drag.y1) - r.top,
+      width: Math.abs(drag.x1 - drag.x0),
+      height: Math.abs(drag.y1 - drag.y0),
+    };
+  }, [drag]);
+
   // ruler ticks
   const tickStep = useMemo(() => {
     const targetPx = 90;
@@ -224,16 +335,23 @@ export default function Timeline() {
           <Scissors className="h-3.5 w-3.5" /> Böl
         </button>
         <button
-          onClick={() => selectedClipId && removeClip(selectedClipId)}
-          disabled={!selectedClipId}
+          onClick={() => {
+            deleteSelection();
+            clearSelection();
+          }}
+          disabled={!selectionCount}
           className="btn-soft !py-1.5 text-xs"
-          title="Sil (Delete)"
+          title="Seçilenleri sil (Delete)"
         >
-          <Trash2 className="h-3.5 w-3.5" /> Sil
+          <Trash2 className="h-3.5 w-3.5" /> Sil{selectionCount > 1 ? ` (${selectionCount})` : ""}
         </button>
+        <span className="hidden items-center gap-1 text-[10px] text-slate-500 lg:inline-flex" title="Boş alanda sürükleyerek kare seçim · Shift+tık ekle · ⌘A tümü">
+          <BoxSelect className="h-3 w-3" /> Sürükleyerek seç · Shift+tık ekle
+        </span>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-[11px] text-slate-500">
             {clips.length} klip · {formatTime(timeline.duration)}
+            {selectionCount > 0 && <span className="text-brand-300"> · {selectionCount} seçili</span>}
           </span>
           <button onClick={() => setZoom(zoom / 1.4)} className="btn-soft h-7 w-7 !px-0" title="Uzaklaş">
             <ZoomOut className="h-3.5 w-3.5" />
@@ -277,11 +395,17 @@ export default function Timeline() {
 
         {/* scrollable tracks */}
         <div ref={scrollRef} className="relative flex-1 overflow-x-auto overflow-y-hidden">
-          <div ref={tracksRef} className="relative" style={{ width: contentWidth }}>
+          <div
+            ref={tracksRef}
+            className={clsx("relative select-none", drag?.kind === "marquee" && "cursor-crosshair")}
+            style={{ width: contentWidth }}
+            onPointerDown={beginMarquee}
+          >
             {/* ruler */}
             <div
               className="relative h-6 cursor-pointer border-b border-white/[0.06] bg-black/20"
               onPointerDown={(e) => {
+                e.stopPropagation();
                 seek(Math.min(timeline.duration, clientXToTime(e.clientX)));
                 setDrag({ kind: "seek" });
               }}
@@ -297,10 +421,11 @@ export default function Timeline() {
             </div>
 
             {/* VIDEO 2 (overlay) TRACK — videos/images that sit ON TOP of the main clips */}
-            <div className="relative h-11 border-b border-white/[0.06] bg-white/[0.015]">
+            <div className="relative h-11 border-b border-white/[0.06] bg-white/[0.015]" data-bg="1">
               {overlays.length === 0 ? (
                 <button
                   onClick={() => v2InputRef.current?.click()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="absolute inset-1 flex items-center justify-center gap-1.5 rounded-md border border-dashed border-white/12 text-[10px] text-slate-500 hover:border-brand-400/50 hover:text-brand-300"
                 >
                   <Plus className="h-3 w-3" /> Üste video/görsel ekle (mevcut videonun üzerine gelir)
@@ -317,6 +442,7 @@ export default function Timeline() {
                       style={{ left, width: w }}
                       title={asset?.name}
                       onPointerDown={(e) => {
+                        e.stopPropagation();
                         if ((e.target as HTMLElement).dataset.h) return;
                         pushHistory();
                         setDrag({ kind: "ov-move", ovId: o.id, startX: e.clientX });
@@ -360,30 +486,37 @@ export default function Timeline() {
             </div>
 
             {/* VIDEO TRACK */}
-            <div
-              className="relative h-16 border-b border-white/[0.06] bg-black/10"
-              onPointerDown={(e) => {
-                if (e.target === e.currentTarget) seek(clientXToTime(e.clientX));
-              }}
-            >
+            <div ref={videoTrackRef} className="relative h-16 border-b border-white/[0.06] bg-black/10" data-bg="1">
               {timeline.clips.map((c, i) => {
                 const asset = assetMap.get(c.assetId);
                 const width = c.duration * pxPerSec;
-                const selected = c.id === selectedClipId;
+                const selected = selectedClipIds.includes(c.id);
+                const primary = c.id === selectedClipId;
                 const prev = timeline.clips[i - 1];
                 const cutMark = prev && prev.assetId === c.assetId && Math.abs(prev.out - c.in) > 0.1;
+                const dragging = drag?.kind === "move" && drag.moved && drag.clipIds.includes(c.id);
                 return (
                   <div
                     key={c.id}
                     className={clsx(
                       "group absolute top-1 bottom-1 overflow-hidden rounded-lg border transition-shadow",
-                      selected ? "border-brand-400 shadow-glow z-10" : "border-white/10 hover:border-white/25"
+                      selected ? "border-brand-400 z-10" : "border-white/10 hover:border-white/25",
+                      primary && "shadow-glow",
+                      dragging && "opacity-50"
                     )}
                     style={{ left: c.start * pxPerSec, width: Math.max(6, width) }}
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      selectClip(c.id);
-                      setDrag({ kind: "move", clipId: c.id, startX: e.clientX });
+                      if (e.button !== 0) return;
+                      const st = useEditor.getState();
+                      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                        toggleClipSelected(c.id);
+                        return;
+                      }
+                      const ids = st.selectedClipIds.includes(c.id) ? st.selectedClipIds : [c.id];
+                      if (!st.selectedClipIds.includes(c.id)) selectClip(c.id);
+                      else if (st.selectedClipId !== c.id) selectClips(ids, c.id);
+                      setDrag({ kind: "move", clipIds: ids, startX: e.clientX, moved: false });
                     }}
                   >
                     {asset?.thumbnail && (
@@ -392,7 +525,7 @@ export default function Timeline() {
                         style={{ backgroundImage: `url(${asset.thumbnail})` }}
                       />
                     )}
-                    <div className="absolute inset-0 bg-black/35" />
+                    <div className={clsx("absolute inset-0", selected ? "bg-brand-500/25" : "bg-black/35")} />
                     {asset?.waveform && asset.waveform.length > 0 && (
                       <ClipWaveform
                         waveform={asset.waveform}
@@ -413,8 +546,8 @@ export default function Timeline() {
                     <span className="absolute left-6 top-1 max-w-[70%] truncate text-[10px] font-medium text-white/90">
                       {asset?.name || "klip"}
                     </span>
-                    {/* trim handles */}
-                    {selected && (
+                    {/* trim handles (primary selection only) */}
+                    {primary && selectedClipIds.length === 1 && (
                       <>
                         <div
                           className="absolute left-0 top-0 bottom-0 z-20 w-2 cursor-ew-resize bg-brand-400/80"
@@ -438,7 +571,7 @@ export default function Timeline() {
                 );
               })}
               {/* drop indicator */}
-              {drag?.kind === "move" && dropIndex !== null && (
+              {drag?.kind === "move" && drag.moved && dropIndex !== null && (
                 <div
                   className="absolute top-0 bottom-0 z-30 w-0.5 bg-brand-300"
                   style={{
@@ -452,30 +585,41 @@ export default function Timeline() {
             </div>
 
             {/* SUBTITLE TRACK */}
-            <div className="relative h-[26px] border-b border-white/[0.06] bg-black/10">
+            <div ref={subTrackRef} className="relative h-[26px] border-b border-white/[0.06] bg-black/10" data-bg="1">
               {subtitles.map((cue) => {
                 const left = cue.start * pxPerSec;
                 const width = Math.max(10, (cue.end - cue.start) * pxPerSec);
-                const selected = cue.id === selectedCueId;
+                const selected = selectedCueIds.includes(cue.id);
+                const primary = cue.id === selectedCueId;
                 return (
                   <div
                     key={cue.id}
                     className={clsx(
                       "group absolute top-1 bottom-1 overflow-hidden rounded text-[9px] leading-tight transition-colors",
-                      selected ? "bg-amber-400 text-black ring-1 ring-amber-200" : "bg-amber-400/20 text-amber-200 hover:bg-amber-400/35"
+                      selected
+                        ? primary
+                          ? "bg-amber-400 text-black ring-1 ring-amber-200"
+                          : "bg-amber-300/80 text-black ring-1 ring-amber-200/70"
+                        : "bg-amber-400/20 text-amber-200 hover:bg-amber-400/35"
                     )}
                     style={{ left, width }}
                     title={cue.text}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      if (e.button !== 0) return;
+                      const st = useEditor.getState();
+                      const ids = st.selectedCueIds.includes(cue.id) ? st.selectedCueIds : [cue.id];
+                      setDrag({
+                        kind: "cue-move",
+                        cueId: cue.id,
+                        cueIds: ids,
+                        startX: e.clientX,
+                        moved: false,
+                        shift: e.shiftKey || e.metaKey || e.ctrlKey,
+                      });
+                    }}
                   >
-                    <button
-                      onClick={() => {
-                        selectCue(cue.id);
-                        seek(cue.start + 0.01);
-                      }}
-                      className="absolute inset-0 px-1.5 text-left"
-                    >
-                      <span className="block truncate">{cue.text}</span>
-                    </button>
+                    <span className="absolute inset-0 block cursor-grab truncate px-1.5">{cue.text}</span>
                     {/* trim handles — drag to shorten/extend the cue */}
                     <div
                       onPointerDown={(e) => {
@@ -499,10 +643,10 @@ export default function Timeline() {
             </div>
 
             {/* MUSIC TRACK */}
-            <div className="relative h-6 border-b border-white/[0.06] bg-black/10">
+            <div className="relative h-6 border-b border-white/[0.06] bg-black/10" data-bg="1">
               {music.source !== "none" && (
                 <div
-                  className="absolute inset-y-1 left-0 flex items-center gap-1 overflow-hidden rounded bg-emerald-500/20 px-2 text-[9px] text-emerald-200"
+                  className="pointer-events-none absolute inset-y-1 left-0 flex items-center gap-1 overflow-hidden rounded bg-emerald-500/20 px-2 text-[9px] text-emerald-200"
                   style={{ width: Math.max(40, timeline.duration * pxPerSec) }}
                 >
                   <Volume2 className="h-2.5 w-2.5" />
@@ -513,10 +657,11 @@ export default function Timeline() {
 
             {/* EXTRA AUDIO TRACK */}
             {audioTracks.length > 0 && (
-              <div className="relative h-6 border-b border-white/[0.06] bg-black/10">
+              <div className="relative h-6 border-b border-white/[0.06] bg-black/10" data-bg="1">
                 {audioTracks.map((t) => (
                   <button
                     key={t.id}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => seek(t.start + 0.01)}
                     className="absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded bg-emerald-500/25 px-1.5 text-left text-[9px] text-emerald-100 hover:bg-emerald-500/40"
                     style={{ left: t.start * pxPerSec, width: Math.max(40, (timeline.duration - t.start) * pxPerSec) }}
@@ -530,14 +675,22 @@ export default function Timeline() {
             )}
 
             {/* LOGO TRACK */}
-            <div className="relative h-[18px]">
+            <div className="relative h-[18px]" data-bg="1">
               {logo.assetId && (
                 <div
-                  className="absolute inset-y-0.5 left-0 rounded bg-brand-500/25"
+                  className="pointer-events-none absolute inset-y-0.5 left-0 rounded bg-brand-500/25"
                   style={{ width: Math.max(40, timeline.duration * pxPerSec) }}
                 />
               )}
             </div>
+
+            {/* MARQUEE */}
+            {marqueeRect && (
+              <div
+                className="pointer-events-none absolute z-50 rounded-sm border border-brand-300 bg-brand-400/15"
+                style={marqueeRect}
+              />
+            )}
 
             {/* PLAYHEAD */}
             <div

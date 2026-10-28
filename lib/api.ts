@@ -10,7 +10,85 @@ import type {
   ExportRequest,
   SilenceSensitivity,
   ProxyStatus,
+  ProjectDoc,
+  ProjectSummary,
+  SavedProject,
+  ProjectComment,
 } from "./types";
+
+// ── Cloud projects ────────────────────────────────────────────
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  const res = await fetch("/api/projects", { cache: "no-store" });
+  if (!res.ok) throw new Error("Projeler alınamadı");
+  return res.json();
+}
+
+export async function getProject(id: string): Promise<SavedProject> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "Proje açılamadı");
+  return data;
+}
+
+export class SaveConflictError extends Error {
+  updatedAt: string;
+  constructor(msg: string, updatedAt: string) {
+    super(msg);
+    this.updatedAt = updatedAt;
+  }
+}
+
+export async function saveProject(payload: {
+  id?: string;
+  name: string;
+  doc: ProjectDoc;
+  assets: MediaAsset[];
+  baseUpdatedAt?: string;
+  force?: boolean;
+}): Promise<{ id: string; updatedAt: string; createdAt: string }> {
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409) throw new SaveConflictError(data?.error || "Çakışma", data?.updatedAt || "");
+  if (!res.ok) throw new Error(data?.error || "Kaydedilemedi");
+  return data;
+}
+
+export async function deleteProjectRemote(id: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Silinemedi");
+}
+
+export async function listComments(id: string): Promise<ProjectComment[]> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/comments`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Yorumlar alınamadı");
+  return res.json();
+}
+
+export async function addComment(
+  id: string,
+  c: { author: string; text: string; time?: number }
+): Promise<ProjectComment> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(c),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "Yorum eklenemedi");
+  return data;
+}
+
+export async function deleteComment(id: string, cid: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/comments?cid=${encodeURIComponent(cid)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Yorum silinemedi");
+}
 
 /** Upload a single file with progress via XHR (raw streamed body). */
 export function uploadFile(

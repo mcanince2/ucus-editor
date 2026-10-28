@@ -27,6 +27,8 @@ export interface MediaAsset {
    */
   proxyUrl?: string;
   proxyStatus?: ProxyStatus;
+  /** Set by the server when a saved project's source file is gone. */
+  missing?: boolean;
   status: AssetStatus;
   progress?: number; // 0..100 while uploading
   error?: string;
@@ -176,7 +178,7 @@ export interface AutoEditSettings {
   removeSilence: boolean;
 }
 
-export type PanelId = "media" | "subtitles" | "logo" | "music" | "layers" | "auto" | "export";
+export type PanelId = "media" | "subtitles" | "logo" | "music" | "layers" | "auto" | "export" | "comments";
 
 /** The serializable project document (the part covered by undo/redo). */
 export interface ProjectDoc {
@@ -189,6 +191,50 @@ export interface ProjectDoc {
   audioTracks: AudioTrack[];
   settings: ProjectSettings;
   autoEdit: AutoEditSettings;
+}
+
+// ── Cloud projects (saved on the server, shared by link) ──────
+
+export interface ProjectComment {
+  id: string;
+  author: string;
+  text: string;
+  /** Optional timeline position the comment refers to (seconds). */
+  time?: number;
+  createdAt: string; // ISO
+}
+
+/** A project as stored on the server: the doc + the asset records it needs. */
+export interface SavedProject {
+  id: string;
+  name: string;
+  doc: ProjectDoc;
+  assets: MediaAsset[];
+  comments: ProjectComment[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  clipCount: number;
+  duration: number;
+  commentCount: number;
+  thumbnail?: string;
+}
+
+/** Client-side state of the open project. */
+export interface ProjectMeta {
+  id?: string;
+  name: string;
+  updatedAt?: string;
+  dirty: boolean;
+  saving: boolean;
+  /** Server has a newer copy than ours; next save must force-overwrite. */
+  conflict: boolean;
 }
 
 // ── Computed timeline shapes ──────────────────────────────────
