@@ -5,6 +5,8 @@
 
 export type AssetKind = "video" | "audio" | "image";
 export type AssetStatus = "uploading" | "processing" | "ready" | "error";
+/** Preview-proxy state: "none" = not applicable (images/audio). */
+export type ProxyStatus = "none" | "pending" | "running" | "ready" | "error";
 
 /** A raw uploaded media file plus its probed metadata and analysis cache. */
 export interface MediaAsset {
@@ -19,6 +21,12 @@ export interface MediaAsset {
   fps?: number;
   hasAudio: boolean;
   thumbnail?: string; // /api/media/<id>?thumb=1
+  /**
+   * Browser-playable 720p H.264 copy for the preview player (set once the
+   * server finishes transcoding). The export always uses the original `url`.
+   */
+  proxyUrl?: string;
+  proxyStatus?: ProxyStatus;
   status: AssetStatus;
   progress?: number; // 0..100 while uploading
   error?: string;

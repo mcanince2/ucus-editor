@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { uploadPath } from "@/lib/storage";
 import { probe, makeThumbnail } from "@/lib/ffmpeg";
+import { enqueueProxy } from "@/lib/proxy";
 import type { MediaAsset } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -35,10 +36,15 @@ export async function POST(req: Request) {
   const meta = await probe(dest);
 
   let thumbnail: string | undefined;
+  let proxyStatus: MediaAsset["proxyStatus"] = "none";
   if (meta.kind === "video") {
     const at = Math.min(1, Math.max(0.1, meta.duration / 2));
     const thumb = await makeThumbnail(dest, id, at);
     if (thumb) thumbnail = `/api/media/${id}?thumb=1&v=${Date.now()}`;
+    // Browser-playable preview copy, transcoded in the background; the client
+    // polls /api/media/<id>?status=1 and switches the player to it when ready.
+    enqueueProxy(id, dest);
+    proxyStatus = "pending";
   }
 
   const asset: MediaAsset = {
@@ -53,6 +59,7 @@ export async function POST(req: Request) {
     fps: meta.fps,
     hasAudio: meta.hasAudio,
     thumbnail,
+    proxyStatus,
     status: "ready",
   };
 

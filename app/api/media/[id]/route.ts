@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { findUpload, thumbPath, contentTypeFor, fileToWebStream } from "@/lib/storage";
+import { findUpload, thumbPath, proxyPath, contentTypeFor, fileToWebStream } from "@/lib/storage";
+import { proxyStatus, enqueueProxy } from "@/lib/proxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const url = new URL(req.url);
   const id = params.id;
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return new Response("Bad id", { status: 400 });
 
   // Thumbnail variant.
   if (url.searchParams.get("thumb")) {
@@ -18,8 +20,32 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     });
   }
 
-  const file = findUpload(id);
-  if (!file || !fs.existsSync(file)) return new Response("Not found", { status: 404 });
+  // Preview-proxy status (polled by the client after upload). If the server
+  // restarted and lost the queue, re-enqueue so the preview still gets fixed.
+  if (url.searchParams.get("status")) {
+    let st = proxyStatus(id);
+    if (st === "none") {
+      const src = findUpload(id);
+      if (src && /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(src)) {
+        enqueueProxy(id, src);
+        st = "pending";
+      }
+    }
+    return Response.json(
+      { proxy: st, proxyUrl: st === "ready" ? `/api/media/${id}?proxy=1` : undefined },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  // Serve the browser-friendly proxy when asked for (preview player only).
+  let file: string | null;
+  if (url.searchParams.get("proxy")) {
+    file = proxyPath(id);
+    if (!fs.existsSync(file)) return new Response("Proxy not ready", { status: 404 });
+  } else {
+    file = findUpload(id);
+    if (!file || !fs.existsSync(file)) return new Response("Not found", { status: 404 });
+  }
 
   const stat = fs.statSync(file);
   const total = stat.size;

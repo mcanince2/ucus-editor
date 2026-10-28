@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { ProbeResult, AssetKind } from "./types";
-import { ensureDirs, thumbPath } from "./storage";
+import { ensureDirs, thumbPath, proxyPath } from "./storage";
 
 // Resolve ffmpeg/ffprobe: explicit env path > bundled static binary on
 // serverless (Vercel) > system binary on PATH (local / Docker). System FFmpeg
@@ -178,6 +178,56 @@ export async function makeThumbnail(file: string, id: string, atSeconds = 1): Pr
   // retry at 0s for very short clips
   const r2 = await run(FFMPEG, ["-y", "-i", file, "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", out]);
   return r2.code === 0 && fs.existsSync(out) ? out : null;
+}
+
+/**
+ * Make a browser-playable preview copy: H.264 yuv420p, short side ≤ 720 px,
+ * AAC audio, faststart. Phone footage (4K HEVC 10-bit .MOV) is black in most
+ * browsers and far too heavy to stream, so the preview player uses this
+ * instead; export still reads the original. Written to a temp name and
+ * renamed so a half-written file is never served.
+ */
+export async function makeProxy(file: string, id: string): Promise<string | null> {
+  ensureDirs();
+  const out = proxyPath(id);
+  const tmp = out + ".part.mp4";
+  const r = await run(FFMPEG, [
+    "-y",
+    "-i",
+    file,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0?",
+    "-vf",
+    "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',format=yuv420p",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "26",
+    "-g",
+    "30",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
+    tmp,
+  ]);
+  if (r.code !== 0 || !fs.existsSync(tmp)) {
+    try {
+      fs.existsSync(tmp) && fs.unlinkSync(tmp);
+    } catch {}
+    console.error(`[proxy ${id}] ffmpeg failed code=${r.code}\n` + r.stderr.slice(-1500));
+    return null;
+  }
+  fs.renameSync(tmp, out);
+  return out;
 }
 
 /**

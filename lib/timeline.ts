@@ -82,9 +82,14 @@ export function moveItem<T>(arr: T[], from: number, to: number): T[] {
 export function keepRangesFromSilences(
   duration: number,
   silences: TimeRange[],
-  settings: AutoEditSettings
+  settings: AutoEditSettings,
+  opts: { minGap?: number } = {}
 ): TimeRange[] {
-  if (!settings.removeSilence || !silences.length) return [{ start: 0, end: duration }];
+  if (!settings.removeSilence || !silences.length || duration <= 0) {
+    return [{ start: 0, end: duration }];
+  }
+  // A gap shorter than this (after padding) is not worth a jump-cut.
+  const minGap = opts.minGap ?? 0.5;
 
   // Invert silences → speech ranges.
   const sorted = [...silences].sort((a, b) => a.start - b.start);
@@ -105,17 +110,24 @@ export function keepRangesFromSilences(
     end: clamp(r.end + pad, 0, duration),
   }));
 
-  // Merge overlaps created by padding and drop fragments that are too short.
+  // Merge ranges whose remaining gap is too small to be worth cutting (this
+  // includes overlaps created by padding). Cutting every half-second pause
+  // turns an interview into a stutter of one-second clips.
   const merged: TimeRange[] = [];
   for (const r of padded) {
     const last = merged[merged.length - 1];
-    if (last && r.start <= last.end + 0.05) {
+    if (last && r.start - last.end < minGap) {
       last.end = Math.max(last.end, r.end);
     } else {
       merged.push({ ...r });
     }
   }
-  return merged.filter((r) => r.end - r.start >= settings.minKeep);
+
+  // Drop isolated blips (a cough, a door) that are too short to be speech —
+  // but never drop everything: if nothing survives, keep the whole clip.
+  const kept = merged.filter((r) => r.end - r.start >= settings.minKeep);
+  if (!kept.length) return [{ start: 0, end: duration }];
+  return kept;
 }
 
 /**
@@ -128,13 +140,17 @@ export function buildClipsFromAssets(
   addTransitions: boolean
 ): Clip[] {
   const clips: Clip[] = [];
-  // Use the per-sensitivity padding (smaller pad = more aggressive removal).
+  // The sensitivity profile drives padding / min-keep / min-gap.
   const profile = SILENCE_PROFILES[settings.sensitivity];
-  const effSettings: AutoEditSettings = { ...settings, padding: profile?.pad ?? settings.padding };
+  const effSettings: AutoEditSettings = {
+    ...settings,
+    padding: profile?.pad ?? settings.padding,
+    minKeep: profile?.minKeep ?? settings.minKeep,
+  };
   for (const asset of assets) {
     if (asset.kind !== "video") continue;
     const ranges = asset.silences && asset.analyzed
-      ? keepRangesFromSilences(asset.duration, asset.silences, effSettings)
+      ? keepRangesFromSilences(asset.duration, asset.silences, effSettings, { minGap: profile?.minGap })
       : [{ start: 0, end: asset.duration }];
     ranges.forEach((r, i) => {
       clips.push({

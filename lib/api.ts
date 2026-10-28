@@ -9,6 +9,7 @@ import type {
   ExportJob,
   ExportRequest,
   SilenceSensitivity,
+  ProxyStatus,
 } from "./types";
 
 /** Upload a single file with progress via XHR (raw streamed body). */
@@ -54,6 +55,45 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "İstek başarısız");
   return data as T;
+}
+
+/** Poll the server's preview-proxy state for an uploaded video. */
+export async function fetchProxyStatus(
+  id: string
+): Promise<{ proxy: ProxyStatus; proxyUrl?: string } | null> {
+  try {
+    const res = await fetch(`/api/media/${encodeURIComponent(id)}?status=1`, { cache: "no-store" });
+    return res.ok ? res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep polling until the preview proxy is ready (or failed) and push the
+ * result into the store. Fire-and-forget; safe to call once per upload.
+ */
+export function watchProxy(id: string, update: (patch: Partial<MediaAsset>) => void) {
+  let tries = 0;
+  const tick = async () => {
+    const st = await fetchProxyStatus(id);
+    if (!st) {
+      if (tries++ < 200) setTimeout(tick, 4000);
+      return;
+    }
+    if (st.proxy === "ready" && st.proxyUrl) {
+      update({ proxyStatus: "ready", proxyUrl: `${st.proxyUrl}&v=${Date.now()}` });
+      return;
+    }
+    if (st.proxy === "error" || st.proxy === "none") {
+      update({ proxyStatus: st.proxy });
+      return;
+    }
+    update({ proxyStatus: st.proxy });
+    // Transcoding a long 4K clip on a small server can take minutes.
+    if (tries++ < 400) setTimeout(tick, 3000);
+  };
+  setTimeout(tick, 1500);
 }
 
 export const analyzeSilence = (id: string, sensitivity: SilenceSensitivity) =>

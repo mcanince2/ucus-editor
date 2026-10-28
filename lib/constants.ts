@@ -25,34 +25,55 @@ export const ACCEPTED_IMAGE = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
 
 /**
  * Maps the three user-facing sensitivities to ffmpeg silencedetect params.
- * `pad` is how much speech (sn) we keep around each detected speech segment —
- * smaller pad = more actually removed. Real footage has room tone, so the
- * noise thresholds are intentionally high (less negative) to catch noisy pauses.
+ *
+ * - `noiseDb`: anything quieter than this counts as silence. Normal speech sits
+ *   around -20…-15 dB and the pauses *between words* easily dip below -25 dB, so
+ *   a threshold that high chops a sentence into word-sized fragments. We stay
+ *   well under speech level and rely on `minSilence` to pick real pauses.
+ * - `minSilence`: a pause must be at least this long to be a cut candidate.
+ * - `pad`: speech kept on each side of a cut so syllables aren't clipped.
+ * - `minGap`: after padding, a gap shorter than this isn't worth a cut — the
+ *   speech on both sides is merged into one clip (no jump-cut every second).
+ * - `minKeep`: isolated blips shorter than this are dropped.
  */
 export const SILENCE_PROFILES: Record<
   SilenceSensitivity,
-  { noiseDb: number; minSilence: number; pad: number; label: string; hint: string }
+  {
+    noiseDb: number;
+    minSilence: number;
+    pad: number;
+    minGap: number;
+    minKeep: number;
+    label: string;
+    hint: string;
+  }
 > = {
   light: {
-    noiseDb: -34,
-    minSilence: 0.7,
-    pad: 0.12,
+    noiseDb: -38,
+    minSilence: 1.2,
+    pad: 0.3,
+    minGap: 0.8,
+    minKeep: 0.8,
     label: "Hafif kesim",
     hint: "Sadece uzun, belirgin sessizlikleri kırpar. Doğal akışı korur.",
   },
   balanced: {
-    noiseDb: -25,
-    minSilence: 0.32,
-    pad: 0.05,
+    noiseDb: -33,
+    minSilence: 0.75,
+    pad: 0.22,
+    minGap: 0.5,
+    minKeep: 0.6,
     label: "Dengeli kesim",
-    hint: "Önerilen. Sıkıya yakın; boşlukları belirgin şekilde temizler.",
+    hint: "Önerilen. Cümle aralarındaki ölü anları temizler, konuşmayı bölmez.",
   },
   aggressive: {
-    noiseDb: -21,
-    minSilence: 0.25,
-    pad: 0.035,
+    noiseDb: -30,
+    minSilence: 0.45,
+    pad: 0.15,
+    minGap: 0.35,
+    minKeep: 0.5,
     label: "Sıkı kesim",
-    hint: "Tüm ölü anları ve gürültülü boşlukları atar. Hızlı, tempolu kurgu.",
+    hint: "Kısa duraksamaları da atar. Hızlı, tempolu kurgu.",
   },
 };
 
@@ -188,8 +209,9 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
 
 export const DEFAULT_AUTOEDIT: AutoEditSettings = {
   sensitivity: "balanced",
-  padding: 0.07,
-  minKeep: 0.3,
+  // Fallbacks only — the active sensitivity profile overrides these.
+  padding: 0.22,
+  minKeep: 0.6,
   removeSilence: true,
 };
 

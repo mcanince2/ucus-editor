@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { UploadCloud, Trash2, GripVertical, Film, Loader2, AlertCircle, Wand2 } from "lucide-react";
 import { useEditor } from "@/lib/store";
-import { uploadFile } from "@/lib/api";
+import { uploadFile, watchProxy } from "@/lib/api";
 import { uid, formatBytes, formatTime } from "@/lib/format";
 import { ACCEPTED_VIDEO } from "@/lib/constants";
 import { PanelHeader, EmptyHint } from "@/components/ui";
@@ -50,6 +50,9 @@ export default function MediaPanel() {
       try {
         const meta = await uploadFile(file, id, (pct) => updateAsset(id, { progress: pct }));
         updateAsset(id, { ...meta, status: "ready", progress: 100 });
+        // Phone footage (4K HEVC) won't play in the browser; swap the preview
+        // to the server's 720p H.264 copy as soon as it's transcoded.
+        if (meta.kind === "video") watchProxy(id, (patch) => updateAsset(id, patch));
       } catch (e: any) {
         updateAsset(id, { status: "error", error: e.message });
         showToast("error", `${file.name}: ${e.message}`);
@@ -160,6 +163,10 @@ export default function MediaPanel() {
                 <p className="mt-0.5 text-[10px] text-slate-500">
                   {a.width}×{a.height} · {formatBytes(a.size)}
                   {!a.hasAudio && " · ses yok"}
+                  {(a.proxyStatus === "pending" || a.proxyStatus === "running") && (
+                    <span className="text-amber-300/80"> · önizleme hazırlanıyor…</span>
+                  )}
+                  {a.proxyStatus === "error" && <span className="text-rose-400/80"> · önizleme üretilemedi</span>}
                 </p>
               )}
             </div>
