@@ -1,6 +1,6 @@
 "use client";
 
-import { Film, Captions, ImageIcon, Music2, Wand2, Clapperboard, Layers } from "lucide-react";
+import { Film, Captions, ImageIcon, Music2, Wand2, Clapperboard, Layers, MessageSquare } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import type { PanelId } from "@/lib/types";
 import clsx from "clsx";
@@ -12,6 +12,7 @@ const ITEMS: { id: PanelId; label: string; icon: React.ReactNode }[] = [
   { id: "logo", label: "Logo", icon: <ImageIcon className="h-5 w-5" /> },
   { id: "music", label: "Müzik", icon: <Music2 className="h-5 w-5" /> },
   { id: "layers", label: "Katmanlar", icon: <Layers className="h-5 w-5" /> },
+  { id: "comments", label: "Yorumlar", icon: <MessageSquare className="h-5 w-5" /> },
   { id: "export", label: "Dışa Aktar", icon: <Clapperboard className="h-5 w-5" /> },
 ];
 

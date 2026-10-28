@@ -17,6 +17,9 @@ import LogoPanel from "./panels/LogoPanel";
 import MusicPanel from "./panels/MusicPanel";
 import LayersPanel from "./panels/LayersPanel";
 import ExportPanel from "./panels/ExportPanel";
+import CommentsPanel from "./panels/CommentsPanel";
+import ProjectSync from "./ProjectSync";
+import { saveCurrentProject } from "@/lib/project-client";
 
 function ActivePanel() {
   const panel = useEditor((s) => s.activePanel);
@@ -35,6 +38,8 @@ function ActivePanel() {
       return <LayersPanel />;
     case "export":
       return <ExportPanel />;
+    case "comments":
+      return <CommentsPanel />;
     default:
       return null;
   }
@@ -120,6 +125,12 @@ export default function Editor() {
       const s = useEditor.getState();
 
       const mod = e.metaKey || e.ctrlKey;
+      // Ctrl/Cmd+S → save to the cloud.
+      if (mod && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void saveCurrentProject();
+        return;
+      }
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) s.redo();
@@ -140,8 +151,16 @@ export default function Editor() {
       } else if (e.key === "s" || e.key === "S") {
         splitAtPlayhead();
       } else if (e.key === "Delete" || e.key === "Backspace") {
-        if (s.selectedClipId) s.removeClip(s.selectedClipId);
-        else if (s.selectedCueId) s.removeCue(s.selectedCueId);
+        // Deletes everything selected (marquee / shift-click), clips and cues.
+        s.deleteSelection();
+        s.clearSelection();
+      } else if (mod && e.key.toLowerCase() === "a") {
+        // Select all clips (or all cues when a cue is selected).
+        e.preventDefault();
+        if (s.selectedCueId || s.selectedCueIds.length) s.selectCues(s.subtitles.map((c) => c.id));
+        else s.selectClips(s.clips.map((c) => c.id));
+      } else if (e.key === "Escape") {
+        s.clearSelection();
       } else if (e.key === "ArrowLeft") {
         s.seek(Math.max(0, s.currentTime - (e.shiftKey ? 1 : 1 / 30)));
       } else if (e.key === "ArrowRight") {
@@ -157,6 +176,7 @@ export default function Editor() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden">
+      <ProjectSync />
       <Topbar />
 
       <div className="flex min-h-0 flex-1">

@@ -52,6 +52,8 @@ export default function PreviewPlayer() {
   const playheadRef = useRef(0);
   const lastTsRef = useRef(0);
   const stallRef = useRef(false);
+  /** Seconds the master clock has been held waiting for the video to buffer. */
+  const waitRef = useRef(0);
   const rafRef = useRef<number | undefined>(undefined);
 
   const [frontIdx, setFrontIdx] = useState(0);
@@ -198,7 +200,21 @@ export default function PreviewPlayer() {
       const dt = lastTsRef.current ? Math.min(0.25, (now - lastTsRef.current) / 1000) : 0;
       lastTsRef.current = now;
       let p = playheadRef.current;
-      if (!stallRef.current) p += dt;
+      // Hold the master clock while the front video is buffering or mid-seek
+      // (slow network / big source). Otherwise the playhead runs ahead, every
+      // frame re-seeks the video to catch up and playback stutters or freezes.
+      // Never hold forever: after 6 s (or on a decode error) keep going.
+      const front = el(frontIdxRef.current);
+      const buffering =
+        !!front &&
+        !!loaded[frontIdxRef.current].current &&
+        !front.error &&
+        getPlaying() &&
+        (front.readyState < 3 || front.seeking);
+      if (buffering) waitRef.current += dt;
+      else waitRef.current = 0;
+      const hold = stallRef.current || (buffering && waitRef.current < 6);
+      if (!hold) p += dt;
       if (p >= tl.duration) {
         playheadRef.current = tl.duration;
         setCurrentTime(tl.duration);
@@ -219,8 +235,10 @@ export default function PreviewPlayer() {
         if (src && loaded[fi].current === src && !stallRef.current && fv) {
           const desired = timelineToSource(clip, p);
           setProps(fv, clip);
-          if (fv.paused && getPlaying()) fv.play().catch(() => {});
-          if (Math.abs(fv.currentTime - desired) > 0.2) {
+          if (fv.paused && getPlaying() && !fv.seeking) fv.play().catch(() => {});
+          // Only correct drift when the element isn't already seeking — piling
+          // seeks on top of each other is what makes playback "stick".
+          if (!fv.seeking && Math.abs(fv.currentTime - desired) > 0.25) {
             try {
               fv.currentTime = desired;
             } catch {}

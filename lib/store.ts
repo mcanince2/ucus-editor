@@ -16,6 +16,8 @@ import type {
   HealthInfo,
   Overlay,
   AudioTrack,
+  ProjectMeta,
+  SavedProject,
 } from "./types";
 import {
   DEFAULT_AUTOEDIT,
@@ -31,8 +33,12 @@ import { clamp, uid } from "./format";
 interface UIState {
   assets: MediaAsset[];
   activePanel: PanelId;
+  /** Primary selection (what the inspector shows). */
   selectedClipId?: string;
   selectedCueId?: string;
+  /** Multi-selection (marquee / shift-click). Always contains the primary. */
+  selectedClipIds: string[];
+  selectedCueIds: string[];
   currentTime: number;
   playing: boolean;
   zoom: number; // pixels per second on the timeline
@@ -41,6 +47,8 @@ interface UIState {
   /** Bumped on every explicit seek so the player resyncs even mid-playback. */
   seekNonce: number;
   health: HealthInfo | null;
+  /** Cloud project this editor state belongs to (saved on the server). */
+  project: ProjectMeta;
 }
 
 type DocKey = keyof ProjectDoc;
@@ -86,6 +94,21 @@ interface StoreState extends ProjectDoc, UIState {
   setSettings: (patch: Partial<ProjectSettings>) => void;
   setAutoEdit: (patch: Partial<AutoEditSettings>) => void;
 
+  // multi-select + bulk edits
+  selectClips: (ids: string[], primary?: string) => void;
+  selectCues: (ids: string[], primary?: string) => void;
+  toggleClipSelected: (id: string) => void;
+  toggleCueSelected: (id: string) => void;
+  clearSelection: () => void;
+  removeClips: (ids: string[]) => void;
+  removeCues: (ids: string[]) => void;
+  /** Move a set of clips (keeping their order) so the block starts at `toIndex`. */
+  moveClips: (ids: string[], toIndex: number) => void;
+  /** Shift a set of cues in time (clamped at 0). */
+  shiftCues: (ids: string[], dt: number) => void;
+  /** Delete whatever is selected (clips + cues). */
+  deleteSelection: () => void;
+
   // ui
   setActivePanel: (p: PanelId) => void;
   selectClip: (id?: string) => void;
@@ -98,6 +121,13 @@ interface StoreState extends ProjectDoc, UIState {
   setBusy: (b: { task: string; progress?: number } | null) => void;
   showToast: (kind: "info" | "error" | "success", msg: string) => void;
   setHealth: (h: HealthInfo | null) => void;
+
+  // cloud project
+  setProject: (patch: Partial<ProjectMeta>) => void;
+  /** Replace the whole editor state with a saved project. */
+  loadProject: (p: SavedProject) => void;
+  /** Start from scratch (keeps the seeded brand logo / music assets). */
+  newProject: () => void;
 
   // history
   pushHistory: () => void;
@@ -167,6 +197,8 @@ export const useEditor = create<StoreState>((set, get) => {
     activePanel: "media",
     selectedClipId: undefined,
     selectedCueId: undefined,
+    selectedClipIds: [],
+    selectedCueIds: [],
     currentTime: 0,
     playing: false,
     zoom: 60,
@@ -174,6 +206,7 @@ export const useEditor = create<StoreState>((set, get) => {
     toast: null,
     seekNonce: 0,
     health: null,
+    project: { name: "Yeni proje", dirty: false, saving: false, conflict: false },
 
     _past: [],
     _future: [],
@@ -204,7 +237,11 @@ export const useEditor = create<StoreState>((set, get) => {
     splitClipAtSource: (id, sourceTime) =>
       commit((s) => ({ clips: splitClips(s.clips, id, sourceTime) })),
     removeClip: (id) =>
-      commit((s) => ({ clips: s.clips.filter((c) => c.id !== id) })),
+      commit((s) => ({
+        clips: s.clips.filter((c) => c.id !== id),
+        selectedClipIds: s.selectedClipIds.filter((x) => x !== id),
+        selectedClipId: s.selectedClipId === id ? undefined : s.selectedClipId,
+      } as Partial<ProjectDoc>)),
     moveClip: (from, to) => commit((s) => ({ clips: moveItem(s.clips, from, to) })),
     duplicateClip: (id) =>
       commit((s) => {
@@ -251,10 +288,82 @@ export const useEditor = create<StoreState>((set, get) => {
     setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
     setAutoEdit: (patch) => set((s) => ({ autoEdit: { ...s.autoEdit, ...patch } })),
 
+    // ── multi-select + bulk edits ──
+    selectClips: (ids, primary) =>
+      set({
+        selectedClipIds: ids,
+        selectedClipId: primary && ids.includes(primary) ? primary : ids[0],
+        selectedCueIds: [],
+        selectedCueId: undefined,
+      }),
+    selectCues: (ids, primary) =>
+      set({
+        selectedCueIds: ids,
+        selectedCueId: primary && ids.includes(primary) ? primary : ids[0],
+        selectedClipIds: [],
+        selectedClipId: undefined,
+      }),
+    toggleClipSelected: (id) =>
+      set((s) => {
+        const ids = s.selectedClipIds.includes(id)
+          ? s.selectedClipIds.filter((x) => x !== id)
+          : [...s.selectedClipIds, id];
+        return { selectedClipIds: ids, selectedClipId: ids.includes(s.selectedClipId || "") ? s.selectedClipId : ids[0], selectedCueIds: [], selectedCueId: undefined };
+      }),
+    toggleCueSelected: (id) =>
+      set((s) => {
+        const ids = s.selectedCueIds.includes(id) ? s.selectedCueIds.filter((x) => x !== id) : [...s.selectedCueIds, id];
+        return { selectedCueIds: ids, selectedCueId: ids.includes(s.selectedCueId || "") ? s.selectedCueId : ids[0], selectedClipIds: [], selectedClipId: undefined };
+      }),
+    clearSelection: () =>
+      set({ selectedClipIds: [], selectedClipId: undefined, selectedCueIds: [], selectedCueId: undefined }),
+    removeClips: (ids) =>
+      commit((s) => ({ clips: s.clips.filter((c) => !ids.includes(c.id)) })),
+    removeCues: (ids) =>
+      commit((s) => ({ subtitles: s.subtitles.filter((c) => !ids.includes(c.id)) })),
+    moveClips: (ids, toIndex) =>
+      commit((s) => {
+        const picked = s.clips.filter((c) => ids.includes(c.id));
+        if (!picked.length) return {};
+        const rest = s.clips.filter((c) => !ids.includes(c.id));
+        // toIndex is an index into the ORIGINAL array; shift it by how many
+        // picked clips sat before it.
+        const before = s.clips.slice(0, toIndex).filter((c) => ids.includes(c.id)).length;
+        const at = clamp(toIndex - before, 0, rest.length);
+        rest.splice(at, 0, ...picked);
+        return { clips: rest };
+      }),
+    shiftCues: (ids, dt) =>
+      set((s) => {
+        const minStart = Math.min(...s.subtitles.filter((c) => ids.includes(c.id)).map((c) => c.start));
+        const d = Math.max(dt, -minStart);
+        return {
+          subtitles: s.subtitles
+            .map((c) =>
+              ids.includes(c.id)
+                ? { ...c, start: c.start + d, end: c.end + d, words: c.words?.map((w) => ({ ...w, start: w.start + d, end: w.end + d })) }
+                : c
+            )
+            .sort((a, b) => a.start - b.start),
+        };
+      }),
+    deleteSelection: () =>
+      commit((s) => {
+        const clipIds = s.selectedClipIds.length ? s.selectedClipIds : s.selectedClipId ? [s.selectedClipId] : [];
+        const cueIds = s.selectedCueIds.length ? s.selectedCueIds : s.selectedCueId ? [s.selectedCueId] : [];
+        if (!clipIds.length && !cueIds.length) return {};
+        return {
+          clips: clipIds.length ? s.clips.filter((c) => !clipIds.includes(c.id)) : s.clips,
+          subtitles: cueIds.length ? s.subtitles.filter((c) => !cueIds.includes(c.id)) : s.subtitles,
+        };
+      }),
+
     // ── ui ──
     setActivePanel: (p) => set({ activePanel: p }),
-    selectClip: (id) => set({ selectedClipId: id, selectedCueId: undefined }),
-    selectCue: (id) => set({ selectedCueId: id, selectedClipId: undefined }),
+    selectClip: (id) =>
+      set({ selectedClipId: id, selectedClipIds: id ? [id] : [], selectedCueId: undefined, selectedCueIds: [] }),
+    selectCue: (id) =>
+      set({ selectedCueId: id, selectedCueIds: id ? [id] : [], selectedClipId: undefined, selectedClipIds: [] }),
     setCurrentTime: (t) => set({ currentTime: Math.max(0, t) }),
     seek: (t) => set((s) => ({ currentTime: Math.max(0, t), seekNonce: s.seekNonce + 1 })),
     setPlaying: (p) => set({ playing: p }),
@@ -268,6 +377,58 @@ export const useEditor = create<StoreState>((set, get) => {
       }, 4200);
     },
     setHealth: (h) => set({ health: h }),
+
+    // ── cloud project ──
+    setProject: (patch) => set((s) => ({ project: { ...s.project, ...patch } })),
+    loadProject: (p) =>
+      set((s) => {
+        const doc = p.doc || ({} as ProjectDoc);
+        // Keep brand seeds that may have arrived before the project loaded.
+        const seeded = s.assets.filter((a) => (a.id === "ucusbrand" || a.id === "ucusmusic") && !p.assets.some((b) => b.id === a.id));
+        return {
+          clips: doc.clips || [],
+          subtitles: doc.subtitles || [],
+          subtitleStyle: doc.subtitleStyle || DEFAULT_SUBTITLE_STYLE,
+          logo: doc.logo || DEFAULT_LOGO,
+          music: doc.music || DEFAULT_MUSIC,
+          overlays: doc.overlays || [],
+          audioTracks: doc.audioTracks || [],
+          settings: { ...DEFAULT_SETTINGS, ...(doc.settings || {}) },
+          autoEdit: { ...DEFAULT_AUTOEDIT, ...(doc.autoEdit || {}) },
+          assets: [...p.assets, ...seeded],
+          selectedClipId: undefined,
+          selectedCueId: undefined,
+          currentTime: 0,
+          playing: false,
+          seekNonce: s.seekNonce + 1,
+          project: { id: p.id, name: p.name, updatedAt: p.updatedAt, dirty: false, saving: false, conflict: false },
+          _past: [],
+          _future: [],
+        };
+      }),
+    newProject: () =>
+      set((s) => ({
+        clips: [],
+        subtitles: [],
+        subtitleStyle: DEFAULT_SUBTITLE_STYLE,
+        logo: { ...DEFAULT_LOGO, assetId: s.assets.some((a) => a.id === "ucusbrand") ? "ucusbrand" : undefined },
+        music: s.assets.some((a) => a.id === "ucusmusic")
+          ? { ...DEFAULT_MUSIC, source: "upload", assetId: "ucusmusic", name: "Consumerism Simplified" }
+          : DEFAULT_MUSIC,
+        overlays: [],
+        audioTracks: [],
+        settings: DEFAULT_SETTINGS,
+        autoEdit: DEFAULT_AUTOEDIT,
+        assets: s.assets.filter((a) => a.id === "ucusbrand" || a.id === "ucusmusic"),
+        selectedClipId: undefined,
+        selectedCueId: undefined,
+        currentTime: 0,
+        playing: false,
+        seekNonce: s.seekNonce + 1,
+        project: { name: "Yeni proje", dirty: false, saving: false, conflict: false },
+        _past: [],
+        _future: [],
+      })),
 
     // ── history ──
     pushHistory: () =>

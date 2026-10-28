@@ -1,7 +1,10 @@
 "use client";
 
-import { Undo2, Redo2, Cpu, Captions, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Undo2, Redo2, Cpu, Captions, Sparkles, CloudUpload, FolderOpen, Link2, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useEditor } from "@/lib/store";
+import { saveCurrentProject, shareUrl } from "@/lib/project-client";
+import ProjectsModal from "./ProjectsModal";
 import clsx from "clsx";
 
 export default function Topbar() {
@@ -11,6 +14,38 @@ export default function Topbar() {
   const futureLen = useEditor((s) => s._future.length);
   const health = useEditor((s) => s.health);
   const setActivePanel = useEditor((s) => s.setActivePanel);
+  const project = useEditor((s) => s.project);
+  const setProject = useEditor((s) => s.setProject);
+  const showToast = useEditor((s) => s.showToast);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+
+  const share = async () => {
+    let id = project.id;
+    if (!id || project.dirty) {
+      const ok = await saveCurrentProject({ quiet: true });
+      if (!ok) return;
+      id = useEditor.getState().project.id;
+    }
+    if (!id) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl(id));
+      showToast("success", "Paylaşım linki kopyalandı. Linki olan herkes açıp düzenleyebilir ve yorum bırakabilir.");
+    } catch {
+      showToast("info", shareUrl(id));
+    }
+  };
+
+  const savedLabel = project.saving
+    ? "Kaydediliyor…"
+    : project.conflict
+    ? "Çakışma: tekrar Kaydet = üzerine yaz"
+    : project.dirty
+    ? project.id
+      ? "Kaydedilmemiş değişiklik"
+      : "Buluta kaydedilmedi"
+    : project.updatedAt
+    ? `Kaydedildi ${new Date(project.updatedAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`
+    : "";
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.06] bg-black/30 px-4 backdrop-blur-xl">
@@ -34,7 +69,43 @@ export default function Topbar() {
         </button>
       </div>
 
+      {/* Project name + cloud state */}
+      <div className="ml-3 flex min-w-0 items-center gap-2">
+        <input
+          value={project.name}
+          onChange={(e) => setProject({ name: e.target.value, dirty: true })}
+          onBlur={() => !project.name.trim() && setProject({ name: "Adsız proje" })}
+          className="h-9 w-[200px] rounded-lg border border-white/[0.06] bg-black/30 px-3 text-xs font-medium text-slate-100 outline-none focus:border-brand-400/50"
+          placeholder="Proje adı"
+          title="Proje adı"
+        />
+        <span
+          className={clsx(
+            "hidden items-center gap-1 text-[10px] lg:inline-flex",
+            project.conflict ? "text-amber-300" : project.dirty ? "text-slate-400" : "text-emerald-300"
+          )}
+        >
+          {project.saving ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : project.conflict ? (
+            <AlertTriangle className="h-3 w-3" />
+          ) : project.dirty ? null : project.updatedAt ? (
+            <Check className="h-3 w-3" />
+          ) : null}
+          {savedLabel}
+        </span>
+      </div>
+
       <div className="ml-auto flex items-center gap-2">
+        <button onClick={() => saveCurrentProject()} disabled={project.saving} className="btn-soft h-9" title="Buluta kaydet (⌘S)">
+          <CloudUpload className="h-4 w-4" /> <span className="hidden md:inline">Kaydet</span>
+        </button>
+        <button onClick={() => setProjectsOpen(true)} className="btn-soft h-9" title="Kayıtlı projeler">
+          <FolderOpen className="h-4 w-4" /> <span className="hidden md:inline">Projeler</span>
+        </button>
+        <button onClick={share} className="btn-soft h-9" title="Paylaşım linkini kopyala">
+          <Link2 className="h-4 w-4" /> <span className="hidden md:inline">Paylaş</span>
+        </button>
         <HealthChip
           ok={!!health?.ffmpeg}
           icon={<Cpu className="h-3 w-3" />}
@@ -55,6 +126,8 @@ export default function Topbar() {
           <Sparkles className="h-4 w-4" /> Dışa Aktar
         </button>
       </div>
+
+      {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
     </header>
   );
 }
@@ -69,7 +142,7 @@ function HealthChip({ ok, icon, label }: { ok: boolean; icon: React.ReactNode; l
       title={label}
     >
       {icon}
-      <span className="hidden md:inline">{label}</span>
+      <span className="hidden xl:inline">{label}</span>
     </span>
   );
 }
