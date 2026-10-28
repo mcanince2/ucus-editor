@@ -19,6 +19,8 @@ export interface ClipSource {
   out: number;
   speed: number;
   muted: boolean;
+  /** Per-clip gain (1 = unchanged). */
+  volume?: number;
   transition: TransitionType;
   durationOut: number; // timeline seconds = (out-in)/speed
   hasAudio: boolean;
@@ -171,7 +173,7 @@ function tempoChain(speed: number): string {
   return parts.join(",");
 }
 
-function escForFilterPath(p: string): string {
+export function escForFilterPath(p: string): string {
   // Inside a single-quoted filtergraph value: escape backslash and quote.
   return p.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
@@ -261,6 +263,8 @@ export function buildExport(input: BuildInput): BuildResult {
       const tempo = tempoChain(c.speed);
       const chain = ["asetpts=PTS-STARTPTS"];
       if (tempo) chain.push(tempo);
+      const vol = c.volume ?? 1;
+      if (Math.abs(vol - 1) > 0.001) chain.push(`volume=${Math.max(0, Math.min(2, vol)).toFixed(3)}`);
       chain.push("aresample=44100", "aformat=channel_layouts=stereo");
       fc.push(`[${i}:a]${chain.join(",")}[a${i}]`);
     } else {

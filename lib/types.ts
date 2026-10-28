@@ -55,6 +55,8 @@ export interface Clip {
   out: number; // source seconds (exclusive)
   speed: number; // playback speed multiplier (1 = normal)
   muted: boolean;
+  /** Clip audio gain, 0..2 (1 = unchanged). Preview caps at 1. */
+  volume?: number;
   /** Transition INTO this clip (from the previous clip). */
   transition: TransitionType;
 }
@@ -322,4 +324,6 @@ export interface ExportJob {
   error?: string;
   downloadUrl?: string;
   outName?: string;
+  /** Human-readable list of audio processing actually applied to the render. */
+  applied?: string[];
 }

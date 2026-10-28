@@ -219,6 +219,15 @@ export default function ExportPanel() {
                     {job.outName}
                   </p>
                 )}
+                {job.applied && job.applied.length > 0 && (
+                  <ul className="mt-3 space-y-1 rounded-xl border border-emerald-400/15 bg-emerald-500/[0.06] p-3 text-left text-[11px] text-emerald-100/90">
+                    {job.applied.map((a) => (
+                      <li key={a} className="flex items-start gap-1.5">
+                        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" /> {a}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <a href={job.downloadUrl} download className="btn-primary mt-5 w-full !py-3">
                   <Download className="h-4 w-4" /> Videoyu İndir
                 </a>
