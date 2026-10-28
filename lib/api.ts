@@ -58,6 +58,17 @@ export async function saveProject(payload: {
   return data;
 }
 
+export async function duplicateProject(id: string, name?: string): Promise<ProjectSummary> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/duplicate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "Çoğaltılamadı");
+  return data;
+}
+
 export async function deleteProjectRemote(id: string): Promise<void> {
   const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Silinemedi");

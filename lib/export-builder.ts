@@ -73,6 +73,10 @@ export interface BuildInput {
   transitionDuration: number;
   normalizeVoice: boolean;
   denoise: boolean;
+  /** Path to an RNNoise model (.rnnn) → arnndn background-noise removal. */
+  rnnoiseModel?: string;
+  /** arnndn mix 0..1 (1 = fully denoised). */
+  noiseStrength?: number;
   music?: MusicPlan;
   audioTracks?: AudioPlan[];
   // pass 2
@@ -308,6 +312,16 @@ export function buildExport(input: BuildInput): BuildResult {
 
   // Speech audio processing.
   const speechChain: string[] = [];
+  if (input.rnnoiseModel) {
+    // RNNoise works at 48 kHz; resample around it and come back to 44.1 kHz
+    // so the rest of the graph (ducking, mix) keeps a single sample rate.
+    const mix = Math.max(0.1, Math.min(1, input.noiseStrength ?? 0.85)).toFixed(2);
+    speechChain.push(
+      "aresample=48000",
+      `arnndn=m='${escForFilterPath(input.rnnoiseModel)}':mix=${mix}`,
+      "aresample=44100"
+    );
+  }
   if (input.denoise) speechChain.push("afftdn=nr=12:nf=-25");
   if (input.normalizeVoice) speechChain.push("loudnorm=I=-16:TP=-1.5:LRA=11");
   let speechLabel = "ca";

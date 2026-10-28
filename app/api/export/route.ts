@@ -36,6 +36,12 @@ function detectFont(): string | undefined {
   return MAC_FONTS.find((f) => fs.existsSync(f));
 }
 
+/** RNNoise speech model shipped with the app (used by ffmpeg's arnndn). */
+function rnnoiseModelPath(): string | undefined {
+  const p = process.env.RNNOISE_MODEL || path.join(process.cwd(), "models", "rnnoise", "sh.rnnn");
+  return fs.existsSync(p) ? p : undefined;
+}
+
 function computeDimensions(aspect: string, quality: string, srcW?: number, srcH?: number) {
   const factor = quality === "preview" ? 0.6 : 1;
   let baseW: number;
@@ -250,6 +256,8 @@ export async function POST(req: Request) {
       transitionDuration: doc.settings.transitionDuration,
       normalizeVoice: opt.safe ? false : doc.settings.normalizeVoice,
       denoise: opt.safe ? false : doc.settings.denoise,
+      rnnoiseModel: !opt.safe && doc.settings.noiseSuppression ? rnnoiseModelPath() : undefined,
+      noiseStrength: doc.settings.noiseStrength,
       music: musicPlan,
       audioTracks: audioPlans,
       overlays: overlayPlans,

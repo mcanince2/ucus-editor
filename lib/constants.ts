@@ -199,6 +199,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   fps: 30,
   normalizeVoice: true,
   denoise: false,
+  noiseSuppression: false,
+  noiseStrength: 0.85,
   blurFill: true,
   intro: false,
   introTitle: "Uçuş Saati",

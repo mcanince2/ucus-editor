@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { Undo2, Redo2, Cpu, Captions, Sparkles, CloudUpload, FolderOpen, Link2, Loader2, Check, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { Undo2, Redo2, Cpu, Captions, Sparkles, CloudUpload, FolderOpen, Link2, Loader2, Check, AlertTriangle, Server, X } from "lucide-react";
 import { useEditor } from "@/lib/store";
 import { saveCurrentProject, shareUrl } from "@/lib/project-client";
 import ProjectsModal from "./ProjectsModal";
 import clsx from "clsx";
+
+/** Fired by the Cmd/Ctrl+S shortcut (Editor) so the same save flow runs. */
+export const SAVE_REQUEST_EVENT = "ucus:save-request";
 
 export default function Topbar() {
   const undo = useEditor((s) => s.undo);
@@ -18,10 +22,50 @@ export default function Topbar() {
   const setProject = useEditor((s) => s.setProject);
   const showToast = useEditor((s) => s.showToast);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [shareAfterSave, setShareAfterSave] = useState(false);
+
+  /**
+   * First save asks for a name and says where the project will live; later
+   * saves go straight to the server.
+   */
+  const requestSave = (thenShare = false) => {
+    const p = useEditor.getState().project;
+    if (!p.id) {
+      setShareAfterSave(thenShare);
+      setSaveOpen(true);
+      return;
+    }
+    void saveCurrentProject().then((ok) => {
+      if (ok && thenShare) void copyShareLink();
+    });
+  };
+
+  useEffect(() => {
+    const onReq = () => requestSave(false);
+    window.addEventListener(SAVE_REQUEST_EVENT, onReq);
+    return () => window.removeEventListener(SAVE_REQUEST_EVENT, onReq);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const copyShareLink = async () => {
+    const id = useEditor.getState().project.id;
+    if (!id) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl(id));
+      showToast("success", "Paylaşım linki kopyalandı. Linki olan herkes açıp düzenleyebilir ve yorum bırakabilir.");
+    } catch {
+      showToast("info", shareUrl(id));
+    }
+  };
 
   const share = async () => {
     let id = project.id;
-    if (!id || project.dirty) {
+    if (!id) {
+      requestSave(true);
+      return;
+    }
+    if (project.dirty) {
       const ok = await saveCurrentProject({ quiet: true });
       if (!ok) return;
       id = useEditor.getState().project.id;
@@ -97,7 +141,7 @@ export default function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button onClick={() => saveCurrentProject()} disabled={project.saving} className="btn-soft h-9" title="Buluta kaydet (⌘S)">
+        <button onClick={() => requestSave(false)} disabled={project.saving} className="btn-soft h-9" title="Buluta kaydet (⌘S)">
           <CloudUpload className="h-4 w-4" /> <span className="hidden md:inline">Kaydet</span>
         </button>
         <button onClick={() => setProjectsOpen(true)} className="btn-soft h-9" title="Kayıtlı projeler">
@@ -128,7 +172,99 @@ export default function Topbar() {
       </div>
 
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
+      {saveOpen && (
+        <SaveDialog
+          initialName={project.name}
+          onCancel={() => setSaveOpen(false)}
+          onSave={async (name) => {
+            setProject({ name });
+            setSaveOpen(false);
+            const ok = await saveCurrentProject();
+            if (ok && shareAfterSave) await copyShareLink();
+            setShareAfterSave(false);
+          }}
+        />
+      )}
     </header>
+  );
+}
+
+function SaveDialog({
+  initialName,
+  onSave,
+  onCancel,
+}: {
+  initialName: string;
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initialName === "Yeni proje" ? "" : initialName);
+  const host = typeof window !== "undefined" ? window.location.host : "";
+  const submit = () => onSave(name.trim() || "Adsız proje");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancel();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Portal to <body>: the header's backdrop-filter would trap a fixed overlay.
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <div className="glass w-[440px] max-w-[94vw] rounded-3xl p-6 shadow-glass" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-brand-500/15 text-brand-300">
+            <CloudUpload className="h-4 w-4" />
+          </div>
+          <div>
+            <h3 className="text-[15px] font-semibold text-white">Projeyi buluta kaydet</h3>
+            <p className="text-xs text-slate-400">Bir ad verin; sonra Kaydet doğrudan günceller.</p>
+          </div>
+          <button onClick={onCancel} className="btn-soft ml-auto h-8 w-8 !px-0" title="Vazgeç">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-slate-300">Proje adı</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") onCancel();
+            }}
+            placeholder="örn. Minik Pilotlar — Eylül etkinliği"
+            className="w-full rounded-lg border border-white/[0.08] bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-400/60"
+          />
+        </label>
+
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[11px] leading-relaxed text-slate-300">
+          <Server className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-300" />
+          <div>
+            <p>
+              <span className="font-semibold text-white">Nereye kaydedilir:</span> bu stüdyonun sunucusuna{" "}
+              <span className="font-mono text-brand-200">{host}</span> (bulut, projeler klasörü). Kliplerin kendisi de
+              aynı sunucuda yüklü kalır.
+            </p>
+            <p className="mt-1 text-slate-400">
+              Kaydedince adres çubuğuna bir paylaşım linki gelir; <span className="text-slate-200">linki olan herkes</span> projeyi
+              açıp düzenleyebilir ve yorum bırakabilir. Kayıtlı projelere üstteki “Projeler”den ulaşırsınız.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <button onClick={onCancel} className="btn-soft flex-1">
+            Vazgeç
+          </button>
+          <button onClick={submit} className="btn-primary flex-1">
+            <CloudUpload className="h-4 w-4" /> Kaydet
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

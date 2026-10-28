@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FolderOpen, Trash2, Link2, Plus, X, Loader2, MessageSquare, Film } from "lucide-react";
+import { createPortal } from "react-dom";
+import { FolderOpen, Trash2, Link2, Plus, X, Loader2, MessageSquare, Film, Copy } from "lucide-react";
 import { useEditor } from "@/lib/store";
-import { listProjects, deleteProjectRemote } from "@/lib/api";
-import { openProject, startNewProject, shareUrl } from "@/lib/project-client";
+import { listProjects, deleteProjectRemote, duplicateProject } from "@/lib/api";
+import { openProject, startNewProject, shareUrl, saveCurrentProject } from "@/lib/project-client";
 import { formatTime } from "@/lib/format";
 import type { ProjectSummary } from "@/lib/types";
 
@@ -26,6 +27,9 @@ export default function ProjectsModal({ onClose }: { onClose: () => void }) {
   };
   useEffect(() => {
     void refresh();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -55,6 +59,20 @@ export default function ProjectsModal({ onClose }: { onClose: () => void }) {
     setConfirmId(null);
   };
 
+  const duplicate = async (p: ProjectSummary) => {
+    setBusyId(p.id);
+    try {
+      // Save pending edits first so the copy reflects what's on screen.
+      if (p.id === currentId && dirty) await saveCurrentProject({ quiet: true });
+      const copy = await duplicateProject(p.id);
+      setItems((xs) => [copy, ...(xs || [])]);
+      showToast("success", `"${copy.name}" oluşturuldu.`);
+    } catch (e: any) {
+      showToast("error", e.message);
+    }
+    setBusyId(null);
+  };
+
   const copyLink = async (id: string) => {
     try {
       await navigator.clipboard.writeText(shareUrl(id));
@@ -70,7 +88,9 @@ export default function ProjectsModal({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  return (
+  // Portal to <body>: the Topbar has backdrop-filter, which would otherwise
+  // make this fixed overlay position itself inside the 56 px header.
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
         className="glass flex max-h-[80vh] w-[560px] max-w-[94vw] flex-col rounded-3xl p-5 shadow-glass"
@@ -134,6 +154,14 @@ export default function ProjectsModal({ onClose }: { onClose: () => void }) {
                 <button onClick={() => copyLink(p.id)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title="Paylaşım linkini kopyala">
                   <Link2 className="h-3.5 w-3.5" />
                 </button>
+                <button
+                  onClick={() => duplicate(p)}
+                  disabled={busyId === p.id}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"
+                  title="Çoğalt (kopyasını oluştur)"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
                 {confirmId === p.id ? (
                   <button onClick={() => remove(p.id)} className="rounded-lg bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30">
                     {busyId === p.id ? "…" : "Silinsin mi?"}
@@ -148,6 +176,7 @@ export default function ProjectsModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
