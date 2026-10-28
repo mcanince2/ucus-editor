@@ -2,7 +2,7 @@
 # it for HF: HF runs containers as UID 1000 and routes to app_port (7860).
 # Pinned to a specific digest because HF caches the `:latest` tag and won't
 # re-pull a new push. Re-pin on each deploy (or query the latest digest).
-FROM ghcr.io/mcanince2/ucus-editor@sha256:48c84a374b0ec2f94eeb4ea9f027548b4713a068fd838122e67cd72fa7c1b3fb
+FROM ghcr.io/mcanince2/ucus-editor@sha256:8cde97642646965a8c628b31437f979d42b4b853c449d8ec044b4ed111ba1242
 
 USER root
 # Bake the licensed default music into the image (shipped only here, not in the
