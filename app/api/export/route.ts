@@ -2,15 +2,17 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { findUpload, EXPORT_DIR, freshTmp, ensureDirs } from "@/lib/storage";
-import { runFfmpegProgress } from "@/lib/ffmpeg";
+import { runFfmpegProgress, run, FFMPEG } from "@/lib/ffmpeg";
 import {
   buildExport,
   evenify,
   planTransitions,
   timelineToExportTime,
   ffmpegErrorHint,
+  parseLoudnormJson,
   type BuildInput,
   type ClipSource,
+  type LoudnormMeasure,
 } from "@/lib/export-builder";
 import { buildAss } from "@/lib/subtitles";
 import { clipDuration } from "@/lib/timeline";
@@ -69,6 +71,9 @@ interface AttemptOpts {
   transitions: boolean;
   /** Safe mode: plain scale/pad, no loudness/denoise filters. */
   safe: boolean;
+  /** Build the audio-only loudness measurement pass. */
+  probe?: boolean;
+  loudnormMeasured?: LoudnormMeasure;
 }
 
 export async function POST(req: Request) {
@@ -259,6 +264,8 @@ export async function POST(req: Request) {
       denoise: opt.safe ? false : doc.settings.denoise,
       rnnoiseModel: !opt.safe && doc.settings.noiseSuppression ? rnnoiseModelPath() : undefined,
       noiseStrength: doc.settings.noiseStrength,
+      loudnormMeasured: opt.loudnormMeasured,
+      audioProbe: opt.probe,
       music: musicPlan,
       audioTracks: audioPlans,
       overlays: overlayPlans,
@@ -304,9 +311,31 @@ async function runExport(
   let input: BuildInput | null = null;
   let built: ReturnType<typeof buildExport> | null = null;
   let lastErr = "";
+
+  // ── PASS 0: measure speech loudness (audio only, fast) so loudnorm can
+  // apply ONE linear gain instead of riding the level through the video. ──
+  let measured: LoudnormMeasure | undefined;
+  const firstInput = prepare(attempts[0]);
+  if (firstInput.normalizeVoice) {
+    updateJob(jobId, { status: "running", stage: "Ses seviyesi ölçülüyor", progress: 1 });
+    try {
+      const probe = buildExport(prepare({ ...attempts[0], probe: true }));
+      const r = await run(FFMPEG, ["-nostats", ...probe.pass1]);
+      if (isCancelled(jobId)) return;
+      measured = parseLoudnormJson(r.stderr) || undefined;
+      if (!measured) {
+        console.warn(`[export ${jobId}] loudness probe gave no usable measurement; using single-pass loudnorm\n` + r.stderr.slice(-800));
+      } else {
+        console.log(`[export ${jobId}] loudness measured: I=${measured.input_i} TP=${measured.input_tp} LRA=${measured.input_lra}`);
+      }
+    } catch (e) {
+      console.warn(`[export ${jobId}] loudness probe failed:`, e);
+    }
+  }
+
   updateJob(jobId, { status: "running", stage: "Klipler birleştiriliyor ve ses karıştırılıyor", progress: 2 });
   for (const opt of attempts) {
-    const inp = prepare(opt);
+    const inp = prepare({ ...opt, loudnormMeasured: measured });
     const b = buildExport(inp);
     const r = await runFfmpegProgress(
       b.pass1,
@@ -420,7 +449,8 @@ async function runExport(
   const applied: string[] = [];
   if (input.rnnoiseModel) applied.push(`Arka plan gürültüsü silindi (RNNoise %${Math.round((input.noiseStrength ?? 0.85) * 100)})`);
   if (input.denoise) applied.push("Hafif gürültü azaltma (FFT)");
-  if (input.normalizeVoice) applied.push("Ses normalize edildi (loudnorm)");
+  if (input.normalizeVoice)
+    applied.push(input.loudnormMeasured ? "Ses normalize edildi (ölçümlü, sabit kazanç)" : "Ses normalize edildi (loudnorm)");
   if (input.music) applied.push(input.music.duck ? "Müzik eklendi, konuşmada kısıldı" : "Müzik eklendi");
   if (input.clips.some((c) => c.volume !== undefined && Math.abs(c.volume - 1) > 0.001)) applied.push("Klip ses seviyeleri uygulandı");
   if (input.assPath) applied.push("Altyazılar gömüldü");

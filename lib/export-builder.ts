@@ -79,6 +79,18 @@ export interface BuildInput {
   rnnoiseModel?: string;
   /** arnndn mix 0..1 (1 = fully denoised). */
   noiseStrength?: number;
+  /**
+   * Loudness measured by a probe pass. With it, loudnorm runs in LINEAR mode:
+   * one constant gain for the whole file instead of a 3-second gain ride, so
+   * voices never dip or swell "for no reason" (long or uneven recordings).
+   */
+  loudnormMeasured?: LoudnormMeasure;
+  /**
+   * Build the audio-only measurement pass instead of the render: same clip
+   * trims, concat/crossfades and cleanup chain, ending in loudnorm's JSON
+   * report, output to null. Cheap (no video decode).
+   */
+  audioProbe?: boolean;
   music?: MusicPlan;
   audioTracks?: AudioPlan[];
   // pass 2
@@ -91,6 +103,39 @@ export interface BuildInput {
   intermediatePath: string;
   outPath: string;
 }
+
+export interface LoudnormMeasure {
+  input_i: number;
+  input_tp: number;
+  input_lra: number;
+  input_thresh: number;
+  target_offset: number;
+}
+
+/** Parse loudnorm's `print_format=json` block out of ffmpeg's stderr. */
+export function parseLoudnormJson(stderr: string): LoudnormMeasure | null {
+  const m = stderr.match(/\{[^{}]*"input_i"[^{}]*\}/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[0]);
+    const num = (k: string) => parseFloat(j[k]);
+    const out = {
+      input_i: num("input_i"),
+      input_tp: num("input_tp"),
+      input_lra: num("input_lra"),
+      input_thresh: num("input_thresh"),
+      target_offset: num("target_offset"),
+    };
+    if (Object.values(out).some((v) => !isFinite(v))) return null;
+    // A silent/empty measurement (-inf-ish) means "nothing to normalize".
+    if (out.input_i < -70) return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+const LOUDNORM_TARGET = "I=-16:TP=-1.5:LRA=11";
 
 export interface BuildResult {
   pass1: string[];
@@ -256,7 +301,7 @@ export function buildExport(input: BuildInput): BuildResult {
         `[${i}:v]${setpts},scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
         `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p[v${i}]`;
     }
-    fc.push(v);
+    if (!input.audioProbe) fc.push(v);
 
     // Audio
     if (c.hasAudio && !c.muted) {
@@ -285,20 +330,24 @@ export function buildExport(input: BuildInput): BuildResult {
       groupA.push(`a${g[0]}`);
       return;
     }
-    const labels = g.map((i) => `[v${i}][a${i}]`).join("");
-    fc.push(`${labels}concat=n=${g.length}:v=1:a=1[gv${gi}][ga${gi}]`);
+    if (input.audioProbe) {
+      fc.push(`${g.map((i) => `[a${i}]`).join("")}concat=n=${g.length}:v=0:a=1[ga${gi}]`);
+    } else {
+      const labels = g.map((i) => `[v${i}][a${i}]`).join("");
+      fc.push(`${labels}concat=n=${g.length}:v=1:a=1[gv${gi}][ga${gi}]`);
+    }
     groupV.push(`gv${gi}`);
     groupA.push(`ga${gi}`);
   });
 
   if (groups.length === 1) {
-    fc.push(`[${groupV[0]}]copy[cv]`);
+    if (!input.audioProbe) fc.push(`[${groupV[0]}]copy[cv]`);
     fc.push(`[${groupA[0]}]acopy[ca]`);
   } else {
     // Video xfade chain across groups.
     let prevV = groupV[0];
     let acc = groupDur[0];
-    for (let gi = 1; gi < groups.length; gi++) {
+    for (let gi = 1; gi < groups.length && !input.audioProbe; gi++) {
       const off = (acc - xd).toFixed(3);
       const outV = gi === groups.length - 1 ? "cv" : `xv${gi}`;
       fc.push(`[${prevV}][${groupV[gi]}]xfade=transition=fade:duration=${xd.toFixed(3)}:offset=${off}[${outV}]`);
@@ -327,7 +376,23 @@ export function buildExport(input: BuildInput): BuildResult {
     );
   }
   if (input.denoise) speechChain.push("afftdn=nr=12:nf=-25");
-  if (input.normalizeVoice) speechChain.push("loudnorm=I=-16:TP=-1.5:LRA=11");
+  if (input.audioProbe) {
+    // Measurement pass: report integrated loudness of the cleaned speech.
+    speechChain.push(`loudnorm=${LOUDNORM_TARGET}:print_format=json`);
+    fc.push(`[ca]${speechChain.join(",")}[sp]`);
+    const probeArgs = [...args1, "-filter_complex", fc.join(";"), "-map", "[sp]", "-f", "null", "-"];
+    return { pass1: probeArgs, pass2: null, mainDuration, totalDuration: mainDuration, plan };
+  }
+  if (input.normalizeVoice) {
+    const m = input.loudnormMeasured;
+    speechChain.push(
+      m
+        ? `loudnorm=${LOUDNORM_TARGET}:measured_I=${m.input_i.toFixed(2)}:measured_TP=${m.input_tp.toFixed(2)}` +
+            `:measured_LRA=${m.input_lra.toFixed(2)}:measured_thresh=${m.input_thresh.toFixed(2)}` +
+            `:offset=${m.target_offset.toFixed(2)}:linear=true`
+        : `loudnorm=${LOUDNORM_TARGET}`
+    );
+  }
   let speechLabel = "ca";
   if (speechChain.length) {
     fc.push(`[ca]${speechChain.join(",")}[sp]`);
@@ -372,7 +437,12 @@ export function buildExport(input: BuildInput): BuildResult {
   if (musicReady || trackLabels.length) {
     if (musicReady && input.music!.duck) {
       fc.push(`[${speechLabel}]asplit=2[sp_main][sp_sc]`);
-      fc.push(`[mus0][sp_sc]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=300:makeup=1[mducked]`);
+      // Gentle ducking: a slower release and a soft knee keep the music from
+      // jumping back up (+20 dB in 0.3 s) at every short pause in speech,
+      // which made the voice feel like it was being turned down.
+      fc.push(
+        `[mus0][sp_sc]sidechaincompress=threshold=0.015:ratio=6:attack=25:release=900:knee=4:makeup=1[mducked]`
+      );
       const ins = ["[sp_main]", "[mducked]", ...trackLabels];
       fc.push(`${ins.join("")}amix=inputs=${ins.length}:normalize=0:dropout_transition=0[aout]`);
     } else {
