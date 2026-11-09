@@ -281,6 +281,8 @@ export interface ProbeResult {
   height?: number;
   fps?: number;
   hasAudio: boolean;
+  /** Audio stream length when it differs from the container (phone/app exports often end audio early). */
+  audioDuration?: number;
   kind: AssetKind;
 }
 

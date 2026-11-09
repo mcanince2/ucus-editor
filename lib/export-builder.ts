@@ -289,17 +289,28 @@ export function buildExport(input: BuildInput): BuildResult {
   for (let i = 0; i < n; i++) {
     const c = input.clips[i];
     const setpts = Math.abs(c.speed - 1) > 0.001 ? `setpts=(PTS-STARTPTS)/${c.speed}` : "setpts=PTS-STARTPTS";
+    // Force both streams of every clip to EXACTLY its nominal length. Source
+    // files often carry an audio track shorter than the video (phone / app
+    // exports); the concat filter does not pad the last segment of a group
+    // and crossfade offsets are computed from nominal lengths, so without this
+    // every such clip left a silent hole at the end of the render (the
+    // "last 5 seconds have no sound" bug). Video: clone the last frame up to
+    // 2 s then trim; audio: pad with silence then trim.
+    const dur = c.durationOut.toFixed(3);
+    // (trailing fps: tpad/trim drop the constant-frame-rate flag xfade needs)
+    const fixV = `tpad=stop_mode=clone:stop_duration=2,trim=duration=${dur},setpts=PTS-STARTPTS,fps=${fps}`;
+    const fixA = `apad,atrim=0:${dur},asetpts=PTS-STARTPTS`;
     let v: string;
     if (input.blurFill) {
       v =
         `[${i}:v]${setpts},split=2[bg${i}][fg${i}];` +
         `[bg${i}]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},gblur=sigma=24[bgb${i}];` +
         `[fg${i}]scale=${W}:${H}:force_original_aspect_ratio=decrease[fg2_${i}];` +
-        `[bgb${i}][fg2_${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=${fps},format=yuv420p[v${i}]`;
+        `[bgb${i}][fg2_${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=${fps},format=yuv420p,${fixV}[v${i}]`;
     } else {
       v =
         `[${i}:v]${setpts},scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
-        `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p[v${i}]`;
+        `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p,${fixV}[v${i}]`;
     }
     if (!input.audioProbe) fc.push(v);
 
@@ -310,7 +321,7 @@ export function buildExport(input: BuildInput): BuildResult {
       if (tempo) chain.push(tempo);
       const vol = c.volume ?? 1;
       if (Math.abs(vol - 1) > 0.001) chain.push(`volume=${Math.max(0, Math.min(2, vol)).toFixed(3)}`);
-      chain.push("aresample=44100", "aformat=channel_layouts=stereo");
+      chain.push("aresample=44100", "aformat=channel_layouts=stereo", fixA);
       fc.push(`[${i}:a]${chain.join(",")}[a${i}]`);
     } else {
       fc.push(
@@ -342,7 +353,7 @@ export function buildExport(input: BuildInput): BuildResult {
 
   if (groups.length === 1) {
     if (!input.audioProbe) fc.push(`[${groupV[0]}]copy[cv]`);
-    fc.push(`[${groupA[0]}]acopy[ca]`);
+    fc.push(`[${groupA[0]}]acopy[ca0]`);
   } else {
     // Video xfade chain across groups.
     let prevV = groupV[0];
@@ -357,11 +368,15 @@ export function buildExport(input: BuildInput): BuildResult {
     // Audio acrossfade chain.
     let prevA = groupA[0];
     for (let gi = 1; gi < groups.length; gi++) {
-      const outA = gi === groups.length - 1 ? "ca" : `xa${gi}`;
+      const outA = gi === groups.length - 1 ? "ca0" : `xa${gi}`;
       fc.push(`[${prevA}][${groupA[gi]}]acrossfade=d=${xd.toFixed(3)}[${outA}]`);
       prevA = outA;
     }
   }
+  // Speech bed must span the whole picture: pad with silence up to the
+  // nominal length (and never beyond), so ducking/mixing and the music keep
+  // running until the last frame even if a crossfade came up a hair short.
+  fc.push(`[ca0]apad=whole_dur=${mainDuration.toFixed(3)},atrim=0:${(mainDuration + 0.05).toFixed(3)},asetpts=PTS-STARTPTS[ca]`);
 
   // Speech audio processing.
   const speechChain: string[] = [];

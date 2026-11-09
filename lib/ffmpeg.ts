@@ -123,7 +123,7 @@ export async function probe(file: string): Promise<ProbeResult> {
     "-show_entries",
     "format=duration",
     "-show_entries",
-    "stream=codec_type,width,height,avg_frame_rate,r_frame_rate",
+    "stream=codec_type,width,height,avg_frame_rate,r_frame_rate,duration",
     "-of",
     "json",
     file,
@@ -133,6 +133,7 @@ export async function probe(file: string): Promise<ProbeResult> {
   let height: number | undefined;
   let fps: number | undefined;
   let hasAudio = false;
+  let audioDuration: number | undefined;
   try {
     const json = JSON.parse(r.stdout);
     duration = parseFloat(json?.format?.duration ?? "0") || 0;
@@ -146,14 +147,18 @@ export async function probe(file: string): Promise<ProbeResult> {
           if (b) fps = Math.round((a / b) * 100) / 100;
         }
       }
-      if (s.codec_type === "audio") hasAudio = true;
+      if (s.codec_type === "audio") {
+        hasAudio = true;
+        const d = parseFloat(s.duration);
+        if (isFinite(d) && d > 0 && audioDuration === undefined) audioDuration = d;
+      }
     }
   } catch {}
   if (kind === "image") {
     duration = 0;
     hasAudio = false;
   }
-  return { duration, width, height, fps, hasAudio, kind };
+  return { duration, width, height, fps, hasAudio, audioDuration, kind };
 }
 
 /** Generate a JPEG thumbnail at ~1s (or middle) of a video. */

@@ -23,6 +23,14 @@ export async function POST(req: Request) {
   let silences: { start: number; end: number }[] = [];
   if (meta.hasAudio) {
     silences = await detectSilence(file, profile.noiseDb, profile.minSilence);
+    // Some phone/app exports end the audio track before the video. There are
+    // no samples there, so silencedetect can't see it — treat that dead tail
+    // as silence so the auto-edit trims it instead of leaving mute video.
+    if (meta.audioDuration && meta.duration - meta.audioDuration > 0.3) {
+      silences.push({ start: meta.audioDuration, end: meta.duration });
+    }
+  } else if (meta.duration > 0) {
+    // No audio at all: nothing to keep by speech, the auto-edit keeps the clip whole.
   }
   const waveform = meta.hasAudio ? await extractWaveform(file, meta.duration, 600) : [];
 
