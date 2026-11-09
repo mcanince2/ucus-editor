@@ -299,7 +299,11 @@ export function buildExport(input: BuildInput): BuildResult {
     const dur = c.durationOut.toFixed(3);
     // (trailing fps: tpad/trim drop the constant-frame-rate flag xfade needs)
     const fixV = `tpad=stop_mode=clone:stop_duration=2,trim=duration=${dur},setpts=PTS-STARTPTS,fps=${fps}`;
-    const fixA = `apad,atrim=0:${dur},asetpts=PTS-STARTPTS`;
+    // asetpts=N/SR/TB rebuilds timestamps from the sample count: ffmpeg 5.x
+    // (the server build) emits bogus 1-sample packet durations after
+    // apad/atrim, which makes the mp4 audio track claim ~1 s and players
+    // that trust the sample table stop the sound early.
+    const fixA = `apad,atrim=0:${dur},asetpts=N/SR/TB`;
     let v: string;
     if (input.blurFill) {
       v =
@@ -376,7 +380,7 @@ export function buildExport(input: BuildInput): BuildResult {
   // Speech bed must span the whole picture: pad with silence up to the
   // nominal length (and never beyond), so ducking/mixing and the music keep
   // running until the last frame even if a crossfade came up a hair short.
-  fc.push(`[ca0]apad=whole_dur=${mainDuration.toFixed(3)},atrim=0:${(mainDuration + 0.05).toFixed(3)},asetpts=PTS-STARTPTS[ca]`);
+  fc.push(`[ca0]apad=whole_dur=${mainDuration.toFixed(3)},atrim=0:${(mainDuration + 0.05).toFixed(3)},asetpts=N/SR/TB[ca]`);
 
   // Speech audio processing.
   const speechChain: string[] = [];
@@ -466,6 +470,11 @@ export function buildExport(input: BuildInput): BuildResult {
     }
     finalAudio = "aout";
   }
+
+  // Final guard: whatever came out of the mix, deliver 44.1 kHz with clean,
+  // sample-counted timestamps so the mp4 audio track length equals the audio.
+  fc.push(`[${finalAudio}]aresample=44100,asetpts=N/SR/TB[afinal]`);
+  finalAudio = "afinal";
 
   args1.push(
     "-filter_complex",
