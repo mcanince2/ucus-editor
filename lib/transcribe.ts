@@ -192,5 +192,18 @@ export async function transcribe(input: string): Promise<TranscriptResult> {
       "Konuşma tanıma için sağlayıcı bulunamadı. Yerel `whisper` kurun veya OPENAI_API_KEY ekleyin."
     );
   }
-  return provider === "local" ? transcribeLocal(input) : transcribeOpenAI(input);
+  if (provider === "local") return transcribeLocal(input);
+  // OpenAI first; if the API refuses (no credits, outage, bad key) and a local
+  // Whisper exists, fall back to it instead of leaving the video without
+  // subtitles. The live server once sat with an exhausted OpenAI balance while
+  // faster-whisper was installed right next to it.
+  try {
+    return await transcribeOpenAI(input);
+  } catch (e: any) {
+    if (await whisperLocalAvailable()) {
+      console.warn("[transcribe] OpenAI failed, falling back to local whisper:", String(e?.message || e).slice(0, 200));
+      return transcribeLocal(input);
+    }
+    throw e;
+  }
 }
